@@ -75,6 +75,35 @@ function accountRow() {
   return row('本机模式', `没有开登录，只有这台机器自己（或 SSH 隧道）能访问。${keep}`, null);
 }
 
+// ---------- 综合要求 ----------
+
+const SYNTH_SAMPLES = [
+  ['只看分歧', '不用写共识。只找出各模型观点不同、互相对立的地方，逐条写清楚各方分别怎么说、理由是什么，最后说你更支持谁。'],
+  ['合成一份统一答案', '不要分“共识 / 分歧”小节。把各方内容合成一份独立成文、直接回答问题的答案；有分歧的地方由你判断谁对并按对的写，只在最后简单列出你拿不准的分歧。'],
+];
+
+const clip = (s, n) => { s = (s || '').replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n) + '…' : s; };
+
+// 放进「由谁来综合」那两个菜单里的一项
+export const synthInstrItem = () => ({ text: '综合要求…', hint: clip(S.settings.synth_instructions, 14) || '默认写法', fn: editSynthInstr });
+
+export function editSynthInstr() {
+  const ta = h('textarea', { class: 'input set-ci', rows: '5', maxlength: '4000', placeholder: '例如：不要罗列共识，只找出大家观点不同、互相对立的地方。' });
+  ta.value = S.settings.synth_instructions || '';
+  const fill = (text, v) => h('button', { class: 'link-btn', type: 'button', text, onclick: () => { ta.value = v; ta.focus(); } });
+  const body = h('div', { class: 'synth-edit' },
+    h('div', { class: 'set-note', text: '综合稿默认按「共识 / 分歧 / 综合者自己的判断」来写，不会把分歧抹平。这里可以再加你自己的要求，和默认写法冲突时以你的为准；留空就只用默认写法。保存后对之后的每一次综合都生效，直到你改掉。' }),
+    ta,
+    h('div', { class: 'synth-samples' }, h('span', { class: 'set-note', text: '填一个现成的：' }),
+      SYNTH_SAMPLES.map(([name, v]) => fill(name, v)), fill('清空', '')),
+    h('details', { class: 'synth-default' }, h('summary', { text: '看默认写法的提示词' }), h('pre', { text: S.settings.synth_default || '' })));
+  dialog('综合要求', body, { buttons: [{ text: '取消' }, { text: '保存', kind: 'primary', fn: async () => {
+    await saveSettings({ synth_instructions: ta.value.trim() });
+    toast(ta.value.trim() ? '已保存，下一次综合起生效' : '已清空，之后按默认写法综合');
+  } }] });
+  setTimeout(() => ta.focus(), 30);
+}
+
 export function openSettings() {
   const s = S.settings;
   const ci = h('textarea', { class: 'input set-ci', rows: '4', maxlength: '8000', placeholder: '例如：用中文回答；先给结论再给理由；涉及数字要给出处。' });
@@ -106,6 +135,9 @@ export function openSettings() {
   const body = h('div', { class: 'settings' },
     h('section', null, h('h3', { text: '自定义指示' }),
       h('div', { class: 'set-note', text: '每个模型每次回答前都会看到这段话。' }), ci, ciState),
+    h('section', null, h('h3', { text: '综合' }),
+      row('综合要求', '「综合成一份」默认按“共识 / 分歧 / 综合者自己的判断”来写。可以另加自己的要求，比如只看分歧。',
+        h('button', { class: 'btn', type: 'button', onclick: editSynthInstr }, '编辑…'))),
     h('section', null, h('h3', { text: '界面' }),
       row('主题', null, seg([['system', '跟随系统'], ['light', '浅色'], ['dark', '深色']], localGet('theme') || 'system', v => { localSet('theme', v === 'system' ? null : v); applyTheme(); })),
       row('多个模型的排版', '手机上总是用标签页。', seg([['columns', '并排'], ['tabs', '标签页']], s.layout === 'tabs' ? 'tabs' : 'columns', v => saveSettings({ layout: v }))),

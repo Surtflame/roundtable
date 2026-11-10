@@ -297,7 +297,7 @@ async def auth_logout(request: Request):
 
 # ---------- 基本信息 ----------
 
-SETTING_KEYS = {"custom_instructions": str, "layout": str, "or_web": bool, "or_favorites": list, "presets": list,
+SETTING_KEYS = {"custom_instructions": str, "synth_instructions": str, "layout": str, "or_web": bool, "or_favorites": list, "presets": list,
                 "send_key": str}
 
 
@@ -337,6 +337,8 @@ async def ensure_defaults() -> None:
 
 def settings_public() -> dict:
     return {"custom_instructions": db.get_setting("custom_instructions", ""),
+            "synth_instructions": db.get_setting("synth_instructions", ""),
+            "synth_default": engine.synth_default_text(),
             "layout": db.get_setting("layout", "columns"),
             "or_web": bool(db.get_setting("or_web", False)),
             "or_favorites": db.get_setting("or_favorites", []) or [],
@@ -376,6 +378,8 @@ async def put_settings(request: Request):
             continue
         if k == "custom_instructions":
             v = v[:8000]
+        if k == "synth_instructions":
+            v = v.strip()[:engine.MAX_SYNTH_INSTR]
         if k in ("or_favorites", "presets") and len(json.dumps(v)) > 100_000:
             continue
         db.set_setting(k, v)
@@ -469,7 +473,10 @@ async def export_conv(cid: str):
             head = f"### {r['label']}"
             if multi or r["stage"] != "answer":
                 head += f" · {STAGE_NAME.get(r['stage'], r['stage'])}" + (f"（第 {r['round']} 轮）" if r["stage"] == "review" else "")
-            out += [head, "", r["text"] or "", ""]
+            out += [head, ""]
+            if r["stage"] == "synth" and r.get("instr"):
+                out += ["> 综合要求：" + r["instr"].replace("\n", "\n> "), ""]
+            out += [r["text"] or "", ""]
             if r["images"]:
                 out += ["（生成图片：" + "、".join(i["name"] for i in r["images"]) + "）", ""]
     name = re.sub(r'[\\/:*?"<>|\r\n]+', " ", c["title"]).strip()[:60] or "对话"

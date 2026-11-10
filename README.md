@@ -1,6 +1,6 @@
 # 圆桌 Roundtable
 
-一个自己部署、自己用的多模型聊天页面：把同一个问题同时交给几个模型，让它们**互相挑错、各自修订**，最后由你指定的一个模型**综合成一份结论**。
+一个自己部署、自己用的多模型聊天页面：把同一个问题同时交给几个模型，让它们**互相挑错、各自修订**，最后由你指定的一个模型**写一份综合稿**：哪些是大家都认同的，哪些地方说法不一样、各自怎么说。
 
 [English summary](#english) · [安装与部署](docs/deploy.md) · [登录怎么配](docs/login.md) · [模型后端与各家规则](docs/backends.md) · [安全说明](docs/security.md)
 
@@ -10,7 +10,7 @@
 
 - **并排回答**：一条消息同时发给最多 6 个模型（可调），各答各的，边生成边显示。
 - **互评与修订**：每个模型看到其他模型的回答，指出问题，再修订自己的答案。可以设 1–3 轮，也可以事后对某一轮追加。
-- **综合**：指定一个模型读完所有人的最终版本，写一份合并后的结论；它判断不了谁对的实质分歧会单独列出来。
+- **综合**：指定一个模型读完所有人的最终版本，像写文献综述那样整理成一份：共识是什么、分歧在哪里、每一方（点名）怎么说，最后才是综合者自己更支持谁。默认不会为了给出统一答案而把分歧抹平。可以加一段自己的“综合要求”改变写法，比如只看分歧，或者反过来要一份合并好的答案。
 - **三种后端，装了哪个用哪个**：
   - **Claude Code**（`claude -p`）——用你自己的 Claude 订阅或 API 密钥
   - **Codex CLI**（`codex exec`）——用你自己的 ChatGPT 订阅或 API 密钥
@@ -82,7 +82,7 @@ systemd、HTTPS、反向代理、备份、升级：[docs/deploy.md](docs/deploy.
 - 界面只有中文，给模型的系统提示词也是中文写的（模型会按你提问的语言回答）。
 - 单用户。没有账号体系、没有分享链接、没有多人协作。
 - Claude Code 和 Codex 的命令行参数会随版本变化；圆桌启动时会检测，但新版本可能需要这边跟着改。
-- 没有数据库迁移机制，升级前请备份数据目录。
+- 数据库升级只会自动补上新增的表和列，没有更完整的迁移机制，升级前请备份数据目录。
 
 ## 许可
 
@@ -94,7 +94,7 @@ systemd、HTTPS、反向代理、备份、升级：[docs/deploy.md](docs/deploy.
 
 ## English
 
-**Roundtable** is a small self-hosted chat UI for asking several LLMs the same question at once, having them **critique each other and revise**, and then letting one model you pick **synthesise a final answer**.
+**Roundtable** is a small self-hosted chat UI for asking several LLMs the same question at once, having them **critique each other and revise**, and then letting one model you pick **write a synthesis** — what they agree on, where they differ and who said what — without flattening the disagreements. You can add your own instructions for the synthesis.
 
 - Backends: **Claude Code** (`claude -p`), **Codex CLI** (`codex exec`) and **OpenRouter**. Use whichever you have; the two CLIs are the unmodified official binaries, run as subprocesses under your own login.
 - Attachments (images, PDF, Office documents, text/code), web search, image output, visible reasoning/search traces.

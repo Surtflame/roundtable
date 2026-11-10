@@ -1,5 +1,6 @@
 // 输入区：选模型、互评设置、附件、发送；以及模型选择器。
 import { S, on, emit, info, prov, shortName, EFFORT, PROV, cfgFromServer, saveSettings, localGet, localSet, convBusy } from './state.js';
+import { synthInstrItem } from './settings.js';
 import { h, icon, api, toast, menu, popover, closePopover, promptDialog, fmtSize, debounce } from './util.js';
 
 let box, ta, banner, chipsEl, attsEl, hintEl, barEl, fileInput, sendBtn, addBtn, presetBtn;
@@ -176,6 +177,7 @@ export function renderComposer() {
         { label: '最后由谁综合成一份结论' },
         ...c.models.map(m => ({ text: shortName(m.key), checked: c.synth === m.key, fn: () => { c.synth = m.key; renderComposer(); } })),
         { text: '不综合', checked: !c.synth, fn: () => { c.synth = null; renderComposer(); } },
+        '-', synthInstrItem(),
       ], { place: 'up' }));
       kids.push(b);
     }

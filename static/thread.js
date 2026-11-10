@@ -2,6 +2,7 @@
 import { S, emit, info, prov, shortName, layoutTabs, EFFORT, findTurn } from './state.js';
 import { h, icon, api, toast, menu, copyText, fmtTok, fmtDur, fmtCost, fmtSize, fmtTime } from './util.js';
 import { renderMarkdown } from './md.js';
+import { synthInstrItem } from './settings.js';
 
 let root, scroller, jump, hooks = {};
 const refs = new Map();      // 回答 id → 卡片里各部分的节点
@@ -240,7 +241,7 @@ function turnActions(t) {
     for (const m of S.cfg.models) if (!cands.some(c => c.key === m.key)) cands.push(m);
     el.append(abtn('swap', '再互评一轮', () => extend(t, 'review', ms)));
     el.append(abtn('merge', '综合成一份', e => menu(e.currentTarget, [{ label: '由谁来综合' },
-      ...cands.map(m => ({ text: info(m.key).name, fn: () => extend(t, 'synth', [m]) }))])));
+      ...cands.map(m => ({ text: info(m.key).name, fn: () => extend(t, 'synth', [m]) })), '-', synthInstrItem()])));
   }
   return el;
 }
@@ -257,6 +258,8 @@ function respEl(t, r, plain) {
   el.append(h('header', { class: 'resp-h' }, h('span', { class: 'dot' }),
     h('span', { class: 'resp-name', text: r.label || info(r.model).name }),
     r.effort ? h('span', { class: 'badge', text: '思考 ' + (EFFORT[r.effort] || r.effort) }) : null, ref.status),
+  r.stage === 'synth' && r.instr ? h('button', { class: 'resp-instr', type: 'button', title: '这份综合稿是按这条要求写的（点一下展开 / 收起）',
+    onclick: e => e.currentTarget.classList.toggle('open') }, h('span', { class: 'k', text: '要求' }), h('span', { class: 'v', text: r.instr })) : null,
   ref.think, ref.acts, ref.md, ref.imgs, ref.err, ref.foot);
   refs.set(r.id, ref);
   paintStatus(r); paintThink(r); paintActs(r); paintBody(r); paintImgs(r); paintFoot(t, r);

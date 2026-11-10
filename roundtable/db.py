@@ -46,7 +46,8 @@ CREATE TABLE IF NOT EXISTS responses(
   error TEXT,
   created_at REAL NOT NULL,
   started_at REAL,
-  finished_at REAL
+  finished_at REAL,
+  instr TEXT NOT NULL DEFAULT ''     -- 综合稿：生成时用户另外提的要求（没有就是空）
 );
 CREATE INDEX IF NOT EXISTS responses_turn ON responses(turn_id, round, pos);
 CREATE INDEX IF NOT EXISTS responses_conv ON responses(conv_id);
@@ -98,7 +99,15 @@ def con() -> sqlite3.Connection:
         _con.execute("PRAGMA synchronous=NORMAL")
         _con.execute("PRAGMA foreign_keys=ON")
         _con.executescript(SCHEMA)
+        _migrate(_con)
     return _con
+
+
+def _migrate(c: sqlite3.Connection) -> None:
+    """给旧库补上后来才有的列。只做“加一列、带默认值”这种不动已有数据的事。"""
+    cols = {r["name"] for r in c.execute("PRAGMA table_info(responses)")}
+    if "instr" not in cols:
+        c.execute("ALTER TABLE responses ADD COLUMN instr TEXT NOT NULL DEFAULT ''")
 
 
 def new_id() -> str:

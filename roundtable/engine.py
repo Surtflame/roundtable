@@ -85,6 +85,7 @@ def resp_public(r: dict) -> dict:
     live = LIVE.get(r["id"])
     out = {k: r[k] for k in ("id", "turn_id", "model", "effort", "stage", "round", "pos", "status", "text",
                              "thinking", "activity", "usage", "error", "started_at", "finished_at")}
+    out["instr"] = r.get("instr") or ""
     imgs = r.get("images") or []
     if live:
         out["text"], out["thinking"] = live["text"], live["thinking"]
@@ -138,6 +139,7 @@ def publish_conv(conv_id: str) -> None:
 
 REVISED_RE = re.compile(r"^#{1,4}\s*(修订后的回答|最终回答|我的回答|Revised Answer|Final Answer)\s*$", re.M | re.I)
 MAX_HISTORY_IMAGES = 12
+MAX_SYNTH_INSTR = 4000
 
 
 def revised_part(text: str) -> str:
@@ -155,19 +157,26 @@ def _usable(r: dict) -> bool:
 
 
 def turn_outputs(turn_id: str, before_round: int | None = None, for_history: bool = True) -> list[dict]:
-    """一个回合里各模型“最新一版”的输出。综合稿（如果是最新的）会取代其余输出。
-    返回 [{model, stage, text, raw, images}]"""
+    """一个回合里各模型“最新一版”的输出。给后续对话当上下文时（for_history），最新的综合稿会取代其余输出；
+    但如果那份综合稿是按用户的特别要求写的（比如“只列分歧”），它不一定完整，就把各模型的回答和综合稿都带上。
+    返回 [{model, stage, text, raw, images}]，综合稿另有 note"""
     rs = [db.row(r) for r in db.q("SELECT * FROM responses WHERE turn_id=? ORDER BY round, pos", (turn_id,))]
     rs = [r for r in rs if _usable(r) and (before_round is None or r["round"] < before_round)]
     if not rs:
         return []
     others = [r for r in rs if r["stage"] != "synth"]
     synths = [r for r in rs if r["stage"] == "synth"]
+    tail = []
     if for_history and synths:
         s = synths[-1]
         if not others or s["round"] > max(o["round"] for o in others):
-            return [{"model": s["model"], "stage": "synth", "text": s["text"], "raw": s["text"],
-                     "images": s["images"] or []}]
+            custom = bool((s.get("instr") or "").strip())
+            base = "多模型互评后的综合稿" if any(o["stage"] == "review" for o in others) else "多个模型各自回答后的综合稿"
+            tail = [{"model": s["model"], "stage": "synth", "text": s["text"], "raw": s["text"],
+                     "images": s["images"] or [],
+                     "note": "基于以上回答、按用户的特别要求写的综合稿" if custom and others else base}]
+            if not custom or not others:
+                return tail
     latest: dict[str, dict] = {}
     for r in others:
         latest[r["model"]] = r
@@ -176,7 +185,7 @@ def turn_outputs(turn_id: str, before_round: int | None = None, for_history: boo
         txt = revised_part(r["text"]) if r["stage"] == "review" else r["text"]
         out.append({"model": r["model"], "stage": r["stage"], "text": txt, "raw": r["text"],
                     "images": r["images"] or []})
-    return out
+    return out + tail
 
 
 def _T(s: str) -> dict:
@@ -222,7 +231,7 @@ def _history_parts(turn: dict, self_key: str, img_budget: list[int]) -> list[dic
         for o in outs:
             name = models.label_sync(o["model"])
             if o["stage"] == "synth":
-                attr = f'model="{name}" note="多模型互评后的综合稿"'
+                attr = f'model="{name}" note="{o.get("note") or "综合稿"}"'
             else:
                 attr = f'model="{name}"' + (' self="true"' if o["model"] == self_key else "")
             b.append(_T(f"<assistant {attr}>\n{o['text']}"))
@@ -255,11 +264,44 @@ REVIEW_INSTR = """你是 {me}。上面 <answers> 里是各个模型针对 <curre
 ## 修订后的回答
 （第 3 步的内容）"""
 
-SYNTH_INSTR = """你是 {me}。上面 <answers> 里是多个模型针对 <current_user_message> 的最新回答{review_note}。请把它们综合成一份给用户的最终回答：
+SYNTH_INSTR = """你是 {me}。上面 <answers> 里是多个模型针对 <current_user_message> 的最新回答{review_note}{own_note}。请像写文献综述那样，把它们整理成一份给用户看的综合稿：你的任务是如实呈现各方说了什么、在哪里一致、在哪里不一致，而不是替它们统一出一个标准答案。
 
-- 采纳各方正确、有价值的内容；对有分歧的地方自己判断谁对，并按正确的写。
-- 写成一份独立成文的回答，直接回答用户，不要逐个复述“某模型说了什么”。
-- 如果存在你无法判定对错的实质分歧，在最后加一个 `## 仍存分歧` 小节，简要列出各方观点和你的倾向；没有就不要加这一节。"""
+按下面的结构写（小节标题照用）：
+
+## 概览
+两三句话：在这个问题上各模型是大体一致还是分歧明显，最主要的分歧在哪里。
+
+## 共识
+各模型都认同的内容，合并起来写清楚，写到用户不必回头翻原回答的程度。只有部分模型提到、其他模型没有反对的内容也放在这里，但要注明是谁提的。
+
+## 分歧
+这是重点。逐条列出各模型结论不同、判断相反、或者侧重点明显不一样的地方。每一条写清楚：分歧点是什么；每一方（点名是哪个模型）的观点，以及它给出的理由。
+
+## 我的判断
+对上面的每处分歧，你更支持哪一方、为什么；判断不了的就直说判断不了。这一节是你个人的看法。
+
+必须遵守：
+- 绝对不要为了得出一个统一的结论而抹掉、淡化或调和分歧。各方说法不一样，就让它们并排摆着。
+- 你自己的判断只写在「我的判断」里：不要把它写进「共识」，也不要用它去改写别人的观点。
+- 转述要忠实于原回答，点名时用 <answer> 标签上的模型名；不要替任何模型补充它没有说过的观点或理由。
+- 确实没有实质分歧时，在「分歧」里如实写“没有实质分歧”，不要硬凑；只是措辞或详略不同不算分歧。"""
+
+SYNTH_EXTRA = """
+
+用户对这份综合稿另有要求。它和上面的写法（包括结构、重点、详略）冲突时，以用户的要求为准；对各模型观点的转述仍然必须忠实：
+<synthesis_requirements>
+{instr}
+</synthesis_requirements>"""
+
+
+def synth_instr() -> str:
+    """用户在设置里写的“综合要求”。建综合稿那一刻抄一份到 responses.instr，之后改设置不影响已经写好的。"""
+    return (db.get_setting("synth_instructions", "") or "").strip()[:MAX_SYNTH_INSTR]
+
+
+def synth_default_text() -> str:
+    """给设置页看的默认综合提示词。"""
+    return SYNTH_INSTR.format(me="〔负责综合的模型〕", review_note="", own_note="")
 
 
 def system_prompt(label: str, web: bool, provider: str) -> str:
@@ -313,8 +355,11 @@ def build_parts(resp: dict, turn: dict) -> list[dict]:
             self_check="对照其他回答，检查你自己上一轮的回答有哪些需要修正或补充。" if has_own
             else "你没有上一轮回答，这一步写你自己对这个问题的独立判断要点。")))
     else:
+        instr = (resp.get("instr") or "").strip()
         parts.append(_T(SYNTH_INSTR.format(
-            me=me, review_note="（已经过互评，其中包含各自的评审意见和修订后的回答）" if had_review else "")))
+            me=me, review_note="（已经过互评，其中包含各自的评审意见和修订后的回答）" if had_review else "",
+            own_note="（self=\"true\" 的是你自己之前的回答，转述时和其他回答同等对待）" if has_own else "")
+            + (SYNTH_EXTRA.format(instr=instr) if instr else "")))
     return parts
 
 
@@ -474,9 +519,10 @@ def start_rounds(turn_id: str, resp_ids: list[str]) -> None:
 
 def _new_resp(turn: dict, m: dict, stage: str, rd: int, pos: int) -> str:
     rid = db.new_id()
-    db.x("INSERT INTO responses(id,turn_id,conv_id,model,effort,stage,round,pos,status,created_at) "
-         "VALUES(?,?,?,?,?,?,?,?,?,?)",
-         (rid, turn["id"], turn["conv_id"], m["key"], m.get("effort") or "", stage, rd, pos, "pending", time.time()))
+    db.x("INSERT INTO responses(id,turn_id,conv_id,model,effort,stage,round,pos,status,instr,created_at) "
+         "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+         (rid, turn["id"], turn["conv_id"], m["key"], m.get("effort") or "", stage, rd, pos, "pending",
+          synth_instr() if stage == "synth" else "", time.time()))
     return rid
 
 
@@ -608,7 +654,9 @@ def regenerate(resp_id: str) -> None:
         raise ValueError("回答不存在")
     if resp_id in RESP_TASKS:
         raise ValueError("这个回答还在生成中")
-    db.x("UPDATE responses SET status='pending' WHERE id=?", (resp_id,))
+    # 重新生成综合稿时用当前的“综合要求”：改了要求再点重新生成，是最顺手的用法
+    db.x("UPDATE responses SET status='pending', instr=? WHERE id=?",
+         (synth_instr() if r["stage"] == "synth" else r.get("instr") or "", resp_id))
     start_rounds(r["turn_id"], [resp_id])
     publish_turn(r["turn_id"])
 

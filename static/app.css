@@ -179,6 +179,10 @@ body.is-new .thread { display: flex; flex-direction: column; justify-content: ce
 .resp-st { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12.5px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .resp[data-st="error"] .resp-st { color: var(--danger); }
 .resp[data-st="pending"] .md, .resp[data-st="pending"] .resp-name { opacity: .55; }
+.resp-instr { display: flex; gap: 8px; width: 100%; margin: 2px 0 8px; padding: 6px 10px; border-radius: 9px; background: var(--hover); color: var(--muted); font-size: 13px; line-height: 1.5; text-align: left; }
+.resp-instr .k { flex: none; font-weight: 600; }
+.resp-instr .v { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.resp-instr.open .v { white-space: pre-wrap; overflow-wrap: anywhere; }
 .resp-err { margin: 8px 0; padding: 9px 12px; border-radius: 10px; background: var(--danger-soft); color: var(--danger); font-size: 13.5px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .resp-f { display: flex; align-items: center; gap: 2px; min-height: 30px; margin-top: 2px; margin-left: -5px; flex-wrap: wrap; }
 .meta { margin-left: auto; font-size: 12px; color: var(--faint); font-variant-numeric: tabular-nums; cursor: default; padding-left: 8px; }
@@ -371,6 +375,10 @@ body.is-new .thread { display: flex; flex-direction: column; justify-content: ce
 .set-title { font-size: 14.5px; overflow-wrap: anywhere; }
 .set-note { font-size: 12.5px; color: var(--muted); line-height: 1.5; }
 .set-ci { margin: 6px 0 2px; min-height: 84px; font-size: 14.5px; }
+.synth-samples { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; margin: 4px 0 10px; }
+.synth-default summary { cursor: pointer; font-size: 13px; color: var(--muted); }
+.synth-default pre { margin: 8px 0 0; padding: 10px 12px; border-radius: 10px; background: var(--hover); font: inherit; font-size: 13px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflow-y: auto; }
+.menu-item .hint { max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .set-sub { font-size: 12.5px; color: var(--muted); margin: 14px 0 4px; font-weight: 600; }
 .set-presets { display: flex; flex-direction: column; gap: 2px; }
 .set-preset { display: flex; align-items: center; gap: 10px; padding: 4px 0; }
