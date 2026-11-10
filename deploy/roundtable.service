@@ -1,0 +1,30 @@
+# systemd 服务示例。把 User、路径改成你自己的，然后：
+#   sudo cp deploy/roundtable.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now roundtable
+#   journalctl -u roundtable -f
+#
+# User 必须是你用来登录 Claude Code / Codex 的那个系统用户（它们的登录状态在这个用户的家目录里）。
+# 不要用 root。
+
+[Unit]
+Description=Roundtable (multi-model chat)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=you
+Group=you
+WorkingDirectory=/home/you/roundtable
+ExecStart=/home/you/roundtable/.venv/bin/python -m roundtable
+Restart=always
+RestartSec=3
+# 新建的文件只有自己能读（对话库、上传的文件）
+UMask=0077
+TimeoutStopSec=15
+
+# 这里故意没有加 systemd 的沙箱加固项（ProtectHome、ProtectSystem、PrivateTmp、NoNewPrivileges 之类）：
+# 命令行工具要读写家目录里的登录状态，bubblewrap 要能自己建沙箱，这些选项很容易把它们弄坏。
+# 想加的话，加完看启动日志里 Codex 那一行是不是还写着沙箱可用。
+
+[Install]
+WantedBy=multi-user.target

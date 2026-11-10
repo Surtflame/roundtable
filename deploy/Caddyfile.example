@@ -1,0 +1,11 @@
+# Caddy 示例：自动申请 HTTPS 证书，把请求转给本机的圆桌。
+# 把域名换成你的；域名的 DNS 要先指到这台机器，80 和 443 端口要能从外面访问。
+
+chat.example.com {
+	encode zstd gzip
+
+	reverse_proxy 127.0.0.1:8050 {
+		# 回答是一点点流式推给浏览器的（Server-Sent Events），不能攒着发
+		flush_interval -1
+	}
+}

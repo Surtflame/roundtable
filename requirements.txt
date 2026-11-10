@@ -1,0 +1,14 @@
+# 直接依赖。经过测试的完整版本组合见 requirements.lock。
+fastapi>=0.115
+uvicorn>=0.30
+httpx>=0.27
+python-multipart>=0.0.9
+pypdfium2>=4.30
+pillow>=10.3
+openpyxl>=3.1
+python-docx>=1.1
+python-pptx>=1.0
+
+# 可选：读 iPhone 的 HEIC/HEIF 图片。没装的话其它功能不受影响，传 HEIC 时会提示。
+# 注意它的二进制安装包里带了 x265，整体按 GPLv2 发布，所以没有列为默认依赖：
+#   pip install pillow-heif
