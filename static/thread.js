@@ -255,12 +255,12 @@ function respEl(t, r, plain) {
     md: h('div', { class: 'md' }), imgs: h('div', { class: 'imgs' }), err: h('div', { class: 'resp-err' }),
     foot: h('footer', { class: 'resp-f' }),
   };
-  el.append(h('header', { class: 'resp-h' }, h('span', { class: 'dot' }),
+  el.append(...[h('header', { class: 'resp-h' }, h('span', { class: 'dot' }),
     h('span', { class: 'resp-name', text: r.label || info(r.model).name }),
     r.effort ? h('span', { class: 'badge', text: '思考 ' + (EFFORT[r.effort] || r.effort) }) : null, ref.status),
   r.stage === 'synth' && r.instr ? h('button', { class: 'resp-instr', type: 'button', title: '这份综合稿是按这条要求写的（点一下展开 / 收起）',
     onclick: e => e.currentTarget.classList.toggle('open') }, h('span', { class: 'k', text: '要求' }), h('span', { class: 'v', text: r.instr })) : null,
-  ref.think, ref.acts, ref.md, ref.imgs, ref.err, ref.foot);
+  ref.think, ref.acts, ref.md, ref.imgs, ref.err, ref.foot].filter(Boolean));   // append(null) 会写出 “null” 四个字
   refs.set(r.id, ref);
   paintStatus(r); paintThink(r); paintActs(r); paintBody(r); paintImgs(r); paintFoot(t, r);
   return el;
