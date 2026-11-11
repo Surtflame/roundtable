@@ -1,9 +1,10 @@
 // 输入区：选模型、互评设置、附件、发送；以及模型选择器。
-import { S, on, emit, info, prov, shortName, EFFORT, PROV, cfgFromServer, saveSettings, localGet, localSet, convBusy } from './state.js';
+import { S, on, emit, info, prov, shortName, EFFORT, PROV, cfgFromServer, ruleIds, saveSettings, localGet, localSet, convBusy } from './state.js';
 import { synthInstrItem, openSettings } from './settings.js';
+import { openRulesMenu } from './rules.js';
 import { h, icon, api, toast, menu, popover, closePopover, promptDialog, fmtSize, debounce } from './util.js';
 
-let box, ta, banner, chipsEl, attsEl, hintEl, barEl, fileInput, sendBtn, addBtn, presetBtn;
+let box, ta, banner, chipsEl, attsEl, hintEl, barEl, fileInput, sendBtn, addBtn, presetBtn, rulesBtn;
 let sending = false, tmpSeq = 0, curKey = 'new';
 const pendingBy = new Map();
 const coarse = () => window.matchMedia('(pointer: coarse)').matches;
@@ -23,6 +24,8 @@ export function initComposer(el) {
     multi: true, isSel: key => S.cfg.models.some(m => m.key === key), onPick: toggleModel, place: 'up',
   }) }, icon('plus'), h('span', { text: '模型' }));
   presetBtn = h('button', { class: 'chip ghost', type: 'button', onclick: presetMenu }, h('span', { text: '预设' }), icon('down'));
+  // 这个按钮一直是同一个元素：菜单开着的时候输入区会重画，换了元素菜单就没处挂了
+  rulesBtn = h('button', { class: 'tool txt rules', type: 'button', 'aria-haspopup': 'true', onclick: () => openRulesMenu(rulesBtn) });
   box.append(banner, chipsEl, attsEl, ta, hintEl, barEl, fileInput);
 
   const saveDraft = debounce(() => { if (!S.editing) localSet('draft:' + curKey, ta.value || null); }, 400);
@@ -42,6 +45,7 @@ export function initComposer(el) {
   on('busy', refreshSend);
   on('settings', renderComposer);
   on('mcp', renderComposer);
+  on('rules', renderComposer);
   renderComposer();
 }
 
@@ -68,7 +72,8 @@ function normalize(c) {
   const models = c.models.slice(0, maxModels());
   let synth = c.synth && models.some(m => m.key === c.synth) ? c.synth : null;
   if (c.synth && !synth && models.length) synth = models[0].key;
-  return { models, mode: c.mode === 'review' ? 'review' : 'parallel', rounds: Math.max(1, Math.min(c.rounds || 1, 3)), synth, web: c.web !== false };
+  return { models, mode: c.mode === 'review' ? 'review' : 'parallel', rounds: Math.max(1, Math.min(c.rounds || 1, 3)), synth, web: c.web !== false,
+    rules: ruleIds(c.rules) };
 }
 export function setCfg(c) {
   if (!c) return;
@@ -96,7 +101,7 @@ export function applyPreset(p) {
   if (!ms.length) return toast('这个预设里的模型现在都不可用', 'err');
   if (miss) toast(`预设里有 ${miss} 个模型现在不可用，已跳过`);
   setCfg({ models: ms, mode: p.mode === 'review' ? 'review' : 'parallel', rounds: p.rounds || 1,
-    synth: p.mode === 'review' ? (p.synth || null) : null, web: S.cfg.web });
+    synth: p.mode === 'review' ? (p.synth || null) : null, web: S.cfg.web, rules: S.cfg.rules });
   focusInput();
 }
 
@@ -167,6 +172,12 @@ export function renderComposer() {
       'aria-label': 'MCP 设置', onclick: () => openSettings('mcp') }, icon('plug'), h('span', { class: 'lbl', text: 'MCP' }),
       mc.tools ? h('span', { text: String(mc.tools) }) : null));
   }
+  const picked = S.rules.filter(r => (c.rules || []).includes(r.id));
+  rulesBtn.className = 'tool txt rules' + (picked.length ? ' on' : '') + (n > 1 ? ' tight' : '');   // tight：手机上只留图标，给互评开关让地方
+  rulesBtn.setAttribute('aria-label', '规则模板');
+  rulesBtn.title = picked.length ? `这次提问会带上：${picked.map(r => r.name).join('、')}\n点击修改` : '规则模板：提问时带上一份你写好的要求。点击选择或新建';
+  rulesBtn.replaceChildren(...[icon('rules'), h('span', { class: 'lbl', text: '规则模板' }), picked.length ? h('span', { class: 'num', text: String(picked.length) }) : null].filter(Boolean));
+  kids.push(rulesBtn);
   if (n > 1) {
     const seg = (mode, text, title) => h('button', { class: 'seg-b' + (c.mode === mode ? ' on' : ''), type: 'button', title,
       onclick: () => {
@@ -287,7 +298,7 @@ async function send() {
   const sm = mode === 'review' && c.synth ? c.models.find(m => m.key === c.synth) : null;
   const replaced = S.editing;
   const body = { conv_id: S.curId, text, attachments: atts, models: c.models, mode, rounds: c.rounds,
-    synth: sm ? { key: sm.key, effort: sm.effort } : null, web: c.web, replace_from: replaced };
+    synth: sm ? { key: sm.key, effort: sm.effort } : null, web: c.web, rules: ruleIds(c.rules), replace_from: replaced };
   sending = true;
   refreshSend();
   let r;

@@ -437,6 +437,39 @@ body.is-new .thread { display: flex; flex-direction: column; justify-content: ce
 .tool.txt.warn { color: #a86a00; background: color-mix(in srgb, #d99a2b 18%, transparent); border-color: transparent; }
 :root[data-theme="dark"] .tool.txt.warn { color: #e9b860; }
 @media (max-width: 720px) { .tool.mcp .lbl { display: none; } .tool.mcp { padding: 0 9px; } .seg-b { padding: 0 10px; } .bar { gap: 4px; } }
+
+/* 规则模板：输入区的按钮、点开的菜单、编辑框、消息下面的小标记 */
+.tool.rules .num { font-variant-numeric: tabular-nums; }
+.rules-pop { width: 380px; max-width: min(380px, calc(100vw - 16px)); padding: 0; overflow: hidden; display: flex; }
+.rules-menu { display: flex; flex-direction: column; min-height: 0; width: 100%; }
+.rules-head { display: flex; align-items: baseline; gap: 8px; padding: 11px 14px 7px; font-size: 12.5px; color: var(--faint); flex: none; }
+.rules-head b { font-size: 14px; color: var(--text); font-weight: 650; flex: none; }
+.rules-list { overflow-y: auto; min-height: 0; flex: 1 1 auto; padding: 0 6px; }
+.rules-row { padding: 6px 4px 6px 8px; }
+.rules-box { width: 18px; height: 18px; border-radius: 5px; border: 1.5px solid var(--border-strong); flex: none; display: inline-flex; align-items: center; justify-content: center; color: var(--accent-text); }
+.rules-box.on { background: var(--accent); border-color: var(--accent); }
+.rules-box .ic svg { width: 13px; height: 13px; stroke-width: 2.6; display: block; }
+.rules-row .pick-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rules-edit { width: 30px; height: 30px; }
+.rules-edit .ic svg { width: 16px; height: 16px; }
+.rules-new { margin: 5px 6px 6px; border-top: 1px solid var(--border); border-radius: 0 0 8px 8px; padding-top: 8px; color: var(--accent); flex: none; }
+.rules-new .ic { color: var(--accent); }
+.rule-form { display: flex; flex-direction: column; gap: 10px; }
+.rule-body { min-height: 220px; max-height: 58dvh; font-size: 14px; line-height: 1.6; }
+.rule-foot { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.rule-count { font-size: 12.5px; color: var(--faint); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.rule-count.over { color: var(--danger); font-weight: 600; }
+.dlg-f .btn.left { margin-right: auto; }
+.btn.danger-ghost { color: var(--danger); border-color: transparent; background: none; }
+.btn.danger-ghost:hover { background: var(--danger-soft); }
+.rule-view section { margin-top: 14px; }
+.rule-view h3 { font-size: 14.5px; margin: 0 0 6px; font-weight: 650; }
+.rule-view pre { margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--border); white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 13.5px; line-height: 1.6; }
+.rule-tag { display: inline-flex; align-items: center; gap: 5px; max-width: min(86%, 640px); font-size: 12px; color: var(--muted); padding: 1px 8px 1px 6px; border-radius: 9px; border: 1px solid var(--border); }
+.rule-tag:hover { background: var(--hover); color: var(--text); }
+.rule-tag .ic svg { width: 13px; height: 13px; display: block; }
+.rule-tag span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 720px) { .rules-pop { width: 100%; max-width: none; } .rule-body { min-height: 180px; max-height: 44dvh; } .tool.rules.tight .lbl { display: none; } .tool.rules.tight { padding: 0 9px; } }
 .use-line { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; padding: 4px 0; }
 .use-name { width: 104px; flex: none; font-size: 14px; }
 .use-val { font-weight: 600; font-size: 14px; font-variant-numeric: tabular-nums; }

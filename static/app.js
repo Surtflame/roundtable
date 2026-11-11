@@ -1,5 +1,5 @@
 // 入口：搭页面骨架、路由、服务器事件流。
-import { S, on, setCatalog, cfgFromServer, defaultCfg, applyTheme, localGet, localSet, saveSettings, findTurn, refreshMcp } from './state.js';
+import { S, on, setCatalog, cfgFromServer, defaultCfg, applyTheme, localGet, localSet, saveSettings, findTurn, refreshMcp, setRules } from './state.js';
 import { h, icon, api, toast, setAuthLostHandler, dialog, debounce, closePopover } from './util.js';
 import { initThread, renderThread, toBottom, stickBottom, applyTurn, applyResp, applyDelta, applyAct, applyImg, applyTurnState } from './thread.js';
 import { initComposer, renderComposer, setCfg, startEdit, applyPreset, openPicker, focusInput, switchConv, addFiles, refreshSend } from './composer.js';
@@ -163,6 +163,9 @@ const HANDLERS = {
     try { setCatalog(await api('GET', '/api/models')); renderComposer(); } catch { /* 刷新页面时自然会取到 */ }
   },
   turn: applyTurn, resp: applyResp, delta: applyDelta, act: applyAct, img: applyImg,
+  async rules() {             // 规则模板在别处（另一个页面、另一台设备）改过
+    try { setRules((await api('GET', '/api/rules')).rules); } catch { /* 下次再说 */ }
+  },
 };
 
 // 一个对话的回答全部出完了：不在眼前的话，留个记号。
@@ -242,6 +245,7 @@ async function boot() {
   }
   S.settings = S.me.settings;
   S.mcp = S.me.mcp || null;
+  S.rules = S.me.rules || [];
   lastLayout = S.settings.layout;
   setCatalog(cat);
   S.convs = list.conversations;

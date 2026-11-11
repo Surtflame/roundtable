@@ -10,7 +10,7 @@ export const S = {
   curId: null,
   cur: null,                 // 当前对话全文
   loading: false,
-  cfg: { models: [], mode: 'parallel', rounds: 1, synth: null, web: true },
+  cfg: { models: [], mode: 'parallel', rounds: 1, synth: null, web: true, rules: [] },
   pending: [],               // 输入框里待发的附件
   editing: null,             // 正在编辑的 turn id
   unread: new Set(),
@@ -22,6 +22,7 @@ export const S = {
   searchQ: '',
   hits: null,
   mcp: null,                 // 现在接着哪些 MCP（后端给的摘要）；没有就是 null
+  rules: [],                 // 存好的规则模板 [{id, name, body}]；这次勾了哪几份记在 cfg.rules（id）
 };
 
 const subs = {};
@@ -63,14 +64,20 @@ export function cfgFromServer(c) {
   return {
     models, mode: c.mode === 'review' ? 'review' : c.mode === 'parallel' ? 'parallel' : (localGet('multiMode') || 'parallel'),
     rounds: Math.max(1, Math.min(c.rounds || 1, 3)), synth, web: c.web !== false,
+    rules: c.rules === undefined ? S.cfg.rules || [] : ruleIds(c.rules),   // 有这个功能之前的对话没有这一项：保持现在勾的不动
   };
+}
+// 配置里的规则模板可能是 id，也可能是 {id, name}（一轮记下的快照）；只留现在还在的
+export function ruleIds(list) {
+  const ids = (Array.isArray(list) ? list : []).map(r => (r && typeof r === 'object' ? r.id : r));
+  return [...new Set(ids)].filter(id => S.rules.some(r => r.id === id));
 }
 export function defaultCfg() {
   const c = cfgFromServer(S.settings.last_config);
   if (c) return c;
   const first = S.cat.claude.find(m => m.id === 'opus') || S.cat.claude[0] || S.cat.codex[0]
     || (S.settings.or_favorites || []).map(k => S.map.get(k)).find(m => m && !m.image_out);
-  return { models: first ? [{ key: first.key, effort: '' }] : [], mode: 'parallel', rounds: 1, synth: null, web: true };
+  return { models: first ? [{ key: first.key, effort: '' }] : [], mode: 'parallel', rounds: 1, synth: null, web: true, rules: [] };
 }
 
 export async function saveSettings(patch) {
@@ -90,6 +97,13 @@ export function setMcp(sum) {
 }
 export async function refreshMcp() {
   try { setMcp((await api('GET', '/api/me')).mcp); } catch { /* 下次再说 */ }
+}
+
+// 规则模板的清单变了（自己改的，或者别的页面改的）
+export function setRules(list) {
+  S.rules = list || [];
+  S.cfg.rules = ruleIds(S.cfg.rules);
+  emit('rules');
 }
 
 export function localGet(k) { try { return localStorage.getItem(k); } catch { return null; } }

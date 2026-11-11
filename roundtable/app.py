@@ -21,7 +21,7 @@ from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse, PlainTe
                                StreamingResponse)
 from starlette.datastructures import Headers, MutableHeaders
 
-from . import auth, backends, config, db, engine, files, mcp, models
+from . import auth, backends, config, db, engine, files, mcp, models, rules
 
 BOOT = db.new_id()
 CSP = ("default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; "
@@ -355,6 +355,7 @@ async def me(request: Request):
     await ensure_defaults()
     return {"user": request.scope["state"]["user"], "auth_mode": config.AUTH_MODE, "boot": BOOT,
             "settings": settings_public(), "session_days": config.SESSION_DAYS, "mcp": mcp.summary(),
+            "rules": rules.list_all(),
             "limits": {"max_models": config.MAX_MODELS_PER_TURN, "max_upload": config.MAX_UPLOAD}}
 
 
@@ -470,6 +471,9 @@ async def export_conv(cid: str):
         out += [f"## 第 {t['seq']} 轮 · 我", "", t["user_text"] or "", ""]
         if t["attachments"]:
             out += ["附件：" + "、".join(a["name"] for a in t["attachments"]), ""]
+        used = [r["name"] for r in (t["config"] or {}).get("rules") or [] if r.get("name")]
+        if used:
+            out += ["> 规则模板：" + "、".join(used), ""]
         multi = len({r["model"] for r in t["responses"]}) > 1
         for r in t["responses"]:
             if r["status"] in ("pending", "skipped") or not (r["text"] or r["images"]):
@@ -500,7 +504,7 @@ async def post_turn(request: Request):
     try:
         return await engine.create_turn(d.get("conv_id") or None, text, att, d.get("models") or [],
                                         d.get("mode") or "parallel", d.get("rounds") or 1, d.get("synth"),
-                                        bool(d.get("web")), d.get("replace_from") or None)
+                                        bool(d.get("web")), d.get("replace_from") or None, d.get("rules"))
     except ValueError as e:
         bad(str(e))
 
@@ -631,6 +635,55 @@ async def mcp_oauth_callback(request: Request):
 async def mcp_delete(sid: str):
     await mcp.delete_server(sid)
     return mcp.state()
+
+
+# ---------- 规则模板（存好的几份提示词，提问时勾上哪份就带哪份） ----------
+
+def _rules_changed() -> dict:
+    engine.publish({"type": "rules"})           # 让其它开着的页面也重新取一遍
+    return {"rules": rules.list_all()}
+
+
+@api.get("/api/rules")
+async def rules_list():
+    return {"rules": rules.list_all()}
+
+
+@api.post("/api/rules")
+async def rules_add(request: Request):
+    d = await body_json(request)
+    try:
+        r = rules.create(d.get("name"), d.get("body"))
+    except ValueError as e:
+        bad(str(e))
+    return {**_rules_changed(), "id": r["id"]}
+
+
+@api.patch("/api/rules/{rid}")
+async def rules_patch(rid: str, request: Request):
+    d = await body_json(request)
+    try:
+        rules.update(rid, d.get("name"), d.get("body"))
+    except KeyError:
+        bad("这份模板已经不在了", 404)
+    except ValueError as e:
+        bad(str(e))
+    return _rules_changed()
+
+
+@api.delete("/api/rules/{rid}")
+async def rules_delete(rid: str):
+    rules.delete(rid)
+    return _rules_changed()
+
+
+@api.get("/api/turns/{tid}/rules")
+async def turn_rules(tid: str):
+    # 这一轮发出去时带的模板原文（当时的快照，不是模板现在的样子）
+    t = db.row(db.q1("SELECT config FROM turns WHERE id=?", (tid,)))
+    if not t:
+        bad("这一轮不存在", 404)
+    return {"rules": [{"id": r.get("id"), "name": r.get("name"), "body": r["body"]} for r in rules.of_turn(t["config"])]}
 
 
 # ---------- 事件流（SSE） ----------

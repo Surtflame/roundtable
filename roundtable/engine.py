@@ -9,7 +9,7 @@ import json
 import re
 import time
 
-from . import backends, config, db, files, mcp, models
+from . import backends, config, db, files, mcp, models, rules
 from .backends import BackendError
 
 # ---------- 事件广播 ----------
@@ -117,7 +117,7 @@ def turn_public(t: dict) -> dict:
                                   (t["id"],))]
     return {"id": t["id"], "conv_id": t["conv_id"], "seq": t["seq"], "user_text": t["user_text"],
             "attachments": [p for p in (files.public(files.get(i)) for i in (t["attachments"] or [])) if p],
-            "mode": t["mode"], "config": t["config"], "created_at": t["created_at"],
+            "mode": t["mode"], "config": rules.names_only(t["config"]), "created_at": t["created_at"],
             "busy": turn_busy(t["id"]), "responses": [resp_public(r) for r in rs]}
 
 
@@ -321,7 +321,8 @@ def synth_default_text() -> str:
     return SYNTH_INSTR.format(me="〔负责综合的模型〕", review_note="", own_note="")
 
 
-def system_prompt(label: str, web: bool, provider: str, mcp_names: list[str] | None = None) -> str:
+def system_prompt(label: str, web: bool, provider: str, mcp_names: list[str] | None = None,
+                  rule_list: list[dict] | None = None) -> str:
     today = datetime.date.today().isoformat()
     lines = [
         f"你是 {label}，在一个私人的多模型聊天应用里和用户对话。今天是 {today}。",
@@ -340,6 +341,8 @@ def system_prompt(label: str, web: bool, provider: str, mcp_names: list[str] | N
     custom = (db.get_setting("custom_instructions", "") or "").strip()
     if custom:
         lines.append("\n用户的自定义指令：\n" + custom)
+    if rule_list:
+        lines.append(rules.prompt(rule_list))
     return "\n".join(lines)
 
 
@@ -466,7 +469,7 @@ async def run_response(resp_id: str) -> None:
             parts = build_parts(resp, turn)
             if provider in ("claude", "codex") or (provider == "or" and info.get("tools") and not info.get("image_out")):
                 ctx = mcp.open_run(sink)
-            system = system_prompt(info["name"], web, provider, ctx.names() if ctx else None)
+            system = system_prompt(info["name"], web, provider, ctx.names() if ctx else None, rules.of_turn(cfg))
             async with asyncio.timeout(config.RUN_TIMEOUT):
                 if provider == "claude":
                     await backends.run_claude(model_id, resp["effort"], system, parts, web, sink, mcp=ctx)
@@ -577,7 +580,8 @@ async def clean_models(ms: list) -> list[dict]:
 
 
 async def create_turn(conv_id: str | None, text: str, attachment_ids: list[str], ms: list, mode: str,
-                      rounds: int, synth: dict | None, web: bool, replace_from: str | None) -> dict:
+                      rounds: int, synth: dict | None, web: bool, replace_from: str | None,
+                      rule_ids: list | None = None) -> dict:
     ms = await clean_models(ms)
     if not ms:
         raise ValueError("至少选一个模型")
@@ -593,7 +597,10 @@ async def create_turn(conv_id: str | None, text: str, attachment_ids: list[str],
     picked = await clean_models([synth]) if (mode == "review" and isinstance(synth, dict) and synth.get("key")) else []
     synth_m = picked[0] if picked else None
     now = time.time()
-    cfg = {"models": ms, "mode": mode, "rounds": rounds, "synth": synth_m, "web": bool(web)}
+    # 规则模板：对话和“上次的选择”里只记勾了哪几份；这一轮自己记一份当时的内容，之后模板改了删了都不影响它
+    rule_snap = rules.snapshot(rule_ids)
+    cfg = {"models": ms, "mode": mode, "rounds": rounds, "synth": synth_m, "web": bool(web),
+           "rules": [r["id"] for r in rule_snap]}
 
     if conv_id:
         if not db.q1("SELECT 1 FROM conversations WHERE id=?", (conv_id,)):
@@ -627,7 +634,8 @@ async def create_turn(conv_id: str | None, text: str, attachment_ids: list[str],
             db.x("UPDATE files SET conv_id=? WHERE id=?", (conv_id, fid))
             att.append(fid)
     db.x("INSERT INTO turns(id,conv_id,seq,user_text,attachments,mode,config,created_at) VALUES(?,?,?,?,?,?,?,?)",
-         (tid, conv_id, seq, text, json.dumps(att), mode, json.dumps(cfg, ensure_ascii=False), now))
+         (tid, conv_id, seq, text, json.dumps(att), mode,
+          json.dumps({**cfg, "rules": rule_snap}, ensure_ascii=False), now))
     turn = {"id": tid, "conv_id": conv_id}
     ids = [_new_resp(turn, m, "answer", 0, i) for i, m in enumerate(ms)]
     if mode == "review":

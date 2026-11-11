@@ -2,7 +2,7 @@
 
 一个自己部署、自己用的多模型聊天页面：把同一个问题同时交给几个模型，让它们**互相挑错、各自修订**，最后由你指定的一个模型**写一份综合稿**：哪些是大家都认同的，哪些地方说法不一样、各自怎么说。
 
-[English summary](#english) · [安装与部署](docs/deploy.md) · [登录怎么配](docs/login.md) · [模型后端与各家规则](docs/backends.md) · [接外部工具（MCP）](docs/mcp.md) · [安全说明](docs/security.md)
+[English summary](#english) · [安装与部署](docs/deploy.md) · [登录怎么配](docs/login.md) · [模型后端与各家规则](docs/backends.md) · [接外部工具（MCP）](docs/mcp.md) · [规则模板](docs/rules.md) · [安全说明](docs/security.md)
 
 ![界面截图](docs/screenshot.png)
 
@@ -18,6 +18,7 @@
 - **附件**：图片、PDF（含扫描版）、Word / Excel / PowerPoint、文本和代码文件。
 - **联网搜索**、**画图**（支持的模型）、思考过程和搜索记录可展开查看。
 - **外部工具（MCP）**：在网页上接入远程 MCP 服务器，接一次对所有模型生效；支持固定令牌和 OAuth。默认一个都不接，接之前请读 [docs/mcp.md](docs/mcp.md) 里的风险说明。
+- **规则模板**：把你希望模型遵守的要求写成几份存起来，提问时勾上哪份带哪份，对这一轮的所有模型都生效。见 [docs/rules.md](docs/rules.md)。
 - **生成在服务器上进行**：关掉浏览器、手机锁屏都不影响，回来接着看。
 - 对话搜索、导出 Markdown、收藏模型、自定义指令、用量统计、深色模式、手机可用。
 - **不需要构建**：一个 Python 进程 + 一个 SQLite 文件；前端是原生 ES 模块，第三方库都放在仓库里，不连任何 CDN。
@@ -105,6 +106,7 @@ systemd、HTTPS、反向代理、备份、升级：[docs/deploy.md](docs/deploy.
 - One Python process and one SQLite file. No build step, no CDN.
 - Three auth modes: `none` (loopback only), `google` (OIDC with an e-mail allowlist) and `password` (single password with lockout).
 - Chat models are restricted to talking, web search and image generation: no shell, no file access, no plugins, and none of the MCP servers configured for the CLIs on your machine; Codex additionally runs inside bubblewrap on Linux.
+- **Rule templates**: save several reusable instruction sets and tick the ones to send along with a question; they apply to every model in that turn, including the critique and synthesis stages. See [docs/rules.md](docs/rules.md).
 - Optional **MCP tools**: add remote MCP servers (Streamable HTTP; static token or OAuth) in the web UI and tick the tools you want; they then work with every backend. Nothing is connected by default, and tokens stay on the server side. Read the risks in [docs/mcp.md](docs/mcp.md) first — tool calls are not confirmed one by one.
 
 The UI and the documentation are currently Chinese only. Quick start:

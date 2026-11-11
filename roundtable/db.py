@@ -95,6 +95,13 @@ CREATE TABLE IF NOT EXISTS oidc_pending(
   verifier TEXT NOT NULL,
   created_at REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS rule_templates(
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  body TEXT NOT NULL,                -- 带进系统提示的正文
+  created_at REAL NOT NULL,
+  updated_at REAL NOT NULL
+);
 """
 
 _con: sqlite3.Connection | None = None

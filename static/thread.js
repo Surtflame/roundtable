@@ -3,6 +3,7 @@ import { S, emit, info, prov, shortName, layoutTabs, EFFORT, findTurn } from './
 import { h, icon, api, toast, menu, copyText, fmtTok, fmtDur, fmtCost, fmtSize, fmtTime } from './util.js';
 import { renderMarkdown } from './md.js';
 import { synthInstrItem } from './settings.js';
+import { showTurnRules } from './rules.js';
 
 let root, scroller, jump, hooks = {};
 const refs = new Map();      // 回答 id → 卡片里各部分的节点
@@ -96,9 +97,12 @@ function userEl(t) {
     const c = bubble.classList.toggle('clamp');
     more.textContent = c ? '展开全文' : '收起';
   } }) : null;
+  const used = ((t.config && t.config.rules) || []).filter(r => r && r.name);
   return h('div', { class: 'user' },
     t.attachments.length ? h('div', { class: 'user-atts' }, t.attachments.map(fileChip)) : null,
     bubble, more,
+    used.length ? h('button', { class: 'rule-tag', type: 'button', title: '这一轮带了这些规则模板，点开看当时的内容', onclick: () => showTurnRules(t) },
+      icon('rules'), h('span', { text: used.map(r => r.name).join('、') })) : null,
     h('div', { class: 'user-ops' },
       h('span', { class: 'time', text: fmtTime(t.created_at) }),
       text ? opBtn('copy', '复制', (e, b) => copyText(text).then(ok => ok && flashCopied(b))) : null,
