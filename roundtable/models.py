@@ -7,7 +7,7 @@ import httpx
 
 from . import backends, config, db
 
-# 用的是 Claude Code 的模型别名，具体指向哪个版本由你装的 CLI 决定。
+# 用的是 Claude Code 的模型别名，具体指向哪个版本由你装的 CLI 决定；版本号是从真实回答里学来的（见 note_claude）。
 # 要换清单（比如钉死某个完整的模型 id），设 ROUNDTABLE_CLAUDE_MODELS，见 .env.example。
 _CLAUDE_DEFAULT = [
     {"id": "fable", "name": "Claude Fable", "desc": "最强，适合最难的问题"},
@@ -18,14 +18,16 @@ _CLAUDE_DEFAULT = [
 
 
 def _claude_models() -> list[dict]:
+    """named=True：显示名是用户自己在 ROUNDTABLE_CLAUDE_MODELS 里写的，原样用，不替他加版本号。"""
     out = []
     for item in config.CLAUDE_MODELS.split(","):
         mid, _, name = item.strip().partition("=")
-        mid = mid.strip()
+        mid, name = mid.strip(), name.strip()
         if mid and all(ch.isalnum() or ch in "-._[]" for ch in mid):
-            desc = next((m["desc"] for m in _CLAUDE_DEFAULT if m["id"] == mid), "")
-            out.append({"id": mid, "name": name.strip() or f"Claude {mid}", "desc": desc})
-    return out or _CLAUDE_DEFAULT
+            d = next((m for m in _CLAUDE_DEFAULT if m["id"] == mid), None)
+            out.append({"id": mid, "name": name or (d["name"] if d else f"Claude {mid}"),
+                        "desc": d["desc"] if d else "", "named": bool(name)})
+    return out or [{**m, "named": False} for m in _CLAUDE_DEFAULT]
 
 
 CLAUDE_MODELS = _claude_models()
@@ -35,13 +37,79 @@ _or_cache: dict = {"at": 0.0, "models": []}
 _OR_CACHE_FILE = config.DATA / "openrouter_models.json"
 
 
+# ---------- Claude 的别名实际指向哪个版本 ----------
+# 圆桌给 Claude Code 的是别名（opus），它每次运行都会报出解析成了哪个模型 id（claude-opus-4-5-…）。
+# 记下最近一次看到的，显示名就能带上版本号；Claude Code 升级后别名换了指向，下一次回答之后这里跟着变。
+
+_claude_actual: dict | None = None
+
+
+def claude_actual() -> dict:
+    """别名 → 最近一次回答时它解析成的模型 id。存在设置表里（网页改不到这一项）。"""
+    global _claude_actual
+    if _claude_actual is None:
+        v = db.get_setting("claude_actual", {})
+        _claude_actual = {k: a for k, a in v.items() if isinstance(a, str)} if isinstance(v, dict) else {}
+    return _claude_actual
+
+
+def note_claude(asked: str, actual: str) -> bool:
+    """记一笔。指向变了返回 True。"""
+    if not asked or not isinstance(actual, str) or not actual.startswith("claude-"):
+        return False
+    actual = actual.split("[")[0]                   # claude-…[1m] 这种后缀不算版本的一部分
+    cur = claude_actual()
+    if asked == actual or cur.get(asked) == actual:
+        return False
+    cur[asked] = actual
+    db.set_setting("claude_actual", cur)
+    return True
+
+
+def _claude_version(actual: str) -> str:
+    """claude-opus-4-5-20251101 → "4.5"；claude-sonnet-4-20250514 → "4"；看不出来是空串。"""
+    return ".".join([t for t in actual.split("[")[0].split("-") if t.isdigit() and len(t) <= 2][:2])
+
+
+def _claude_pretty(mid: str) -> str:
+    """完整的模型 id → 像样的名字：claude-opus-4-5-20251101 → "Claude Opus 4.5"。认不出来是空串。"""
+    toks = mid.split("[")[0].split("-")
+    fam = next((t for t in toks[1:] if t.isalpha()), "")
+    if toks[0] != "claude" or not fam:
+        return ""
+    return " ".join(x for x in ("Claude", fam.capitalize(), _claude_version(mid), mid[len(mid.split("[")[0]):]) if x)
+
+
+def claude_name(mid: str, actual: str | None = None) -> str:
+    """显示名。actual 是某个回答实际用的模型 id；None = 按别名现在指向的版本；"" = 不知道，就不带版本号。"""
+    m = next((m for m in CLAUDE_MODELS if m["id"] == mid), None)
+    if m and m["named"]:
+        return m["name"]
+    if mid.startswith("claude-"):                   # 清单里写的就是完整的模型 id
+        return _claude_pretty(mid) or (m["name"] if m else mid)
+    base = m["name"] if m else next((d["name"] for d in _CLAUDE_DEFAULT if d["id"] == mid), f"Claude {mid}")
+    if actual is None:
+        actual = claude_actual().get(mid, "")
+    if not actual:
+        return base
+    ver = _claude_version(actual) if mid in actual.split("[")[0].split("-") else ""
+    return f"{base} {ver}" if ver else f"{base}（{actual}）"
+
+
 def claude_catalog() -> list[dict]:
     if not backends.CAPS["claude"]["ok"]:
         return []
     efforts = CLAUDE_EFFORTS if "--effort" in backends.CAPS["claude"]["flags"] else []
-    return [{"key": f"claude:{m['id']}", "provider": "claude", "id": m["id"], "name": m["name"],
-             "desc": m["desc"], "efforts": efforts, "default_effort": "", "vision": True,
-             "image_out": False, "web": True} for m in CLAUDE_MODELS]
+    out = []
+    for m in CLAUDE_MODELS:
+        actual = "" if m["id"].startswith("claude-") else claude_actual().get(m["id"], "")
+        desc = m["desc"]
+        if actual and m["named"]:                   # 名字是用户自己起的：不改它，把实际指向写在说明里
+            desc = " · ".join(x for x in (desc, f"当前指向 {actual}") if x)
+        out.append({"key": f"claude:{m['id']}", "provider": "claude", "id": m["id"], "name": claude_name(m["id"]),
+                    "desc": desc, "actual": actual, "efforts": efforts, "default_effort": "", "vision": True,
+                    "image_out": False, "web": True})
+    return out
 
 
 def _codex_entries(models) -> list[dict]:
@@ -143,11 +211,11 @@ async def lookup(key: str) -> dict | None:
     return None
 
 
-def label_sync(key: str) -> str:
-    """不发网络请求的名字查找（导出、提示词里用）。"""
+def label_sync(key: str, actual: str | None = None) -> str:
+    """不发网络请求的名字查找（导出、提示词里用）。actual 只对 Claude 有意义，见 claude_name。"""
     prov, _, mid = key.partition(":")
     if prov == "claude":
-        return next((m["name"] for m in CLAUDE_MODELS if m["id"] == mid), f"Claude {mid}")
+        return claude_name(mid, actual)
     if prov == "codex":
         return next((m["name"] for m in codex_catalog() if m["id"] == mid), mid)
     if prov == "or":

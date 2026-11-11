@@ -316,7 +316,8 @@ def default_presets(cat: dict, favorites: list[str]) -> list[dict]:
     picks = [(pick(cat["claude"], "opus"), "Claude"), (pick(cat["codex"], ""), "GPT"),
              (next((k for k in favorites if k in have and not have[k].get("image_out")), None), "OpenRouter")]
     picks = [(k, n) for k, n in picks if k]
-    out = [{"name": models.label_sync(k), "models": [{"key": k}], "mode": "single"} for k, _ in picks[:1]]
+    # 预设名不带版本号，免得过时
+    out = [{"name": models.label_sync(k, ""), "models": [{"key": k}], "mode": "single"} for k, _ in picks[:1]]
     if len(picks) >= 2:
         two = picks[:2]
         out.append({"name": " × ".join(n for _, n in two) + " 互评", "models": [{"key": k} for k, _ in two],
@@ -396,14 +397,15 @@ async def usage():
     if time.time() - _usage_cache["at"] > 60:
         _usage_cache.update(at=time.time(), **{"or": await backends.openrouter_key_info()})
     since = time.time() - 30 * 86400
-    rows = db.q("SELECT model, COUNT(*) AS n, SUM(COALESCE(json_extract(usage,'$.cost'),0)) AS cost, "
+    rows = db.q("SELECT model, json_extract(usage,'$.model') AS actual, COUNT(*) AS n, "
+                "SUM(COALESCE(json_extract(usage,'$.cost'),0)) AS cost, "
                 "SUM(COALESCE(json_extract(usage,'$.cost_est'),0)) AS cost_est, "
                 "SUM(COALESCE(json_extract(usage,'$.in'),0)) AS tin, SUM(COALESCE(json_extract(usage,'$.out'),0)) AS tout "
-                "FROM responses WHERE started_at>? AND status IN ('done','stopped','error') GROUP BY model "
+                "FROM responses WHERE started_at>? AND status IN ('done','stopped','error') GROUP BY model, actual "
                 "ORDER BY n DESC", (since,))
     return {"openrouter": _usage_cache["or"], "backends": backends.status(),
             "claude_rate_limit": backends.STATE.get("claude_rate_limit"),
-            "by_model": [{"model": r["model"], "label": models.label_sync(r["model"]), "n": r["n"],
+            "by_model": [{"model": r["model"], "label": models.label_sync(r["model"], r["actual"] or ""), "n": r["n"],
                           "cost": r["cost"], "cost_est": r["cost_est"], "in": r["tin"], "out": r["tout"]}
                          for r in rows]}
 

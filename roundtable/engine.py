@@ -81,6 +81,23 @@ def _track(turn_id: str, task: asyncio.Task) -> None:
 
 # ---------- 对外的 JSON 形态 ----------
 
+def resp_label(r: dict) -> str:
+    """一个回答的模型名。Claude 的带上实际用的版本：答完的看当时记下的模型 id，还没答完的按别名现在指向的；
+    没记过的老回答不带版本号（不猜）。"""
+    actual = (r.get("usage") or {}).get("model")
+    if not isinstance(actual, str):
+        actual = None if r["status"] in ("pending", "running") else ""
+    return models.label_sync(r["model"], actual)
+
+
+def _claude_seen(asked: str, actual: str) -> None:
+    if models.note_claude(asked, actual):
+        publish({"type": "models"})               # 显示名变了，让开着的页面重新取一次模型清单
+
+
+backends.claude_model_seen = _claude_seen
+
+
 def resp_public(r: dict) -> dict:
     live = LIVE.get(r["id"])
     out = {k: r[k] for k in ("id", "turn_id", "model", "effort", "stage", "round", "pos", "status", "text",
@@ -91,7 +108,7 @@ def resp_public(r: dict) -> dict:
         out["text"], out["thinking"] = live["text"], live["thinking"]
         out["activity"], imgs = live["activity"], live["images"]
     out["images"] = [p for p in (files.public(files.get(i)) for i in imgs) if p]
-    out["label"] = models.label_sync(r["model"])
+    out["label"] = resp_label(r)
     return out
 
 
@@ -159,7 +176,7 @@ def _usable(r: dict) -> bool:
 def turn_outputs(turn_id: str, before_round: int | None = None, for_history: bool = True) -> list[dict]:
     """一个回合里各模型“最新一版”的输出。给后续对话当上下文时（for_history），最新的综合稿会取代其余输出；
     但如果那份综合稿是按用户的特别要求写的（比如“只列分歧”），它不一定完整，就把各模型的回答和综合稿都带上。
-    返回 [{model, stage, text, raw, images}]，综合稿另有 note"""
+    返回 [{model, label, stage, text, raw, images}]，综合稿另有 note"""
     rs = [db.row(r) for r in db.q("SELECT * FROM responses WHERE turn_id=? ORDER BY round, pos", (turn_id,))]
     rs = [r for r in rs if _usable(r) and (before_round is None or r["round"] < before_round)]
     if not rs:
@@ -172,7 +189,7 @@ def turn_outputs(turn_id: str, before_round: int | None = None, for_history: boo
         if not others or s["round"] > max(o["round"] for o in others):
             custom = bool((s.get("instr") or "").strip())
             base = "多模型互评后的综合稿" if any(o["stage"] == "review" for o in others) else "多个模型各自回答后的综合稿"
-            tail = [{"model": s["model"], "stage": "synth", "text": s["text"], "raw": s["text"],
+            tail = [{"model": s["model"], "label": resp_label(s), "stage": "synth", "text": s["text"], "raw": s["text"],
                      "images": s["images"] or [],
                      "note": "基于以上回答、按用户的特别要求写的综合稿" if custom and others else base}]
             if not custom or not others:
@@ -183,7 +200,7 @@ def turn_outputs(turn_id: str, before_round: int | None = None, for_history: boo
     out = []
     for r in sorted(latest.values(), key=lambda r: r["pos"]):
         txt = revised_part(r["text"]) if r["stage"] == "review" else r["text"]
-        out.append({"model": r["model"], "stage": r["stage"], "text": txt, "raw": r["text"],
+        out.append({"model": r["model"], "label": resp_label(r), "stage": r["stage"], "text": txt, "raw": r["text"],
                     "images": r["images"] or []})
     return out + tail
 
@@ -229,7 +246,7 @@ def _history_parts(turn: dict, self_key: str, img_budget: list[int]) -> list[dic
         b += _user_parts(t, img_budget)
         b.append(_T("</user>"))
         for o in outs:
-            name = models.label_sync(o["model"])
+            name = o["label"]
             if o["stage"] == "synth":
                 attr = f'model="{name}" note="{o.get("note") or "综合稿"}"'
             else:
@@ -343,7 +360,7 @@ def build_parts(resp: dict, turn: dict) -> list[dict]:
     has_own = False
     had_review = any(o["stage"] == "review" for o in outs)
     for o in outs:
-        name = models.label_sync(o["model"])
+        name = o["label"]
         own = o["model"] == resp["model"]
         has_own = has_own or own
         body = o["raw"] if resp["stage"] == "synth" else o["text"]

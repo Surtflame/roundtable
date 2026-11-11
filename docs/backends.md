@@ -86,15 +86,24 @@ ANTHROPIC_API_KEY=sk-ant-...
 
 ### 模型清单
 
-默认列出 Claude Code 自带的几个模型别名，别名具体指向哪个版本由你装的 Claude Code 决定；你的套餐不包含的模型选了会报错。想自己定清单：
+默认列出 Claude Code 自带的几个模型别名（`fable`、`opus`、`sonnet`、`haiku`），别名具体指向哪个版本由你装的 Claude Code 决定；你的套餐不包含的模型选了会报错。
+
+**版本号是自动显示的。** Claude Code 每次运行都会报出别名实际解析成了哪个模型（比如 `opus` → `claude-opus-4-5-…`），圆桌把它记下来：
+
+- 某个别名**第一次回答之后**，它的名字就从“Claude Opus”变成“Claude Opus 4.5”，开着的页面不用刷新。在那之前圆桌不知道版本，也不会为了知道而替你发一次请求。自动起标题用的是 `haiku`，所以它通常最先带上版本号。
+- Claude Code 升级后别名指向了新版本，下一次回答之后名字跟着变。
+- 每个回答的卡片上显示的是**它当时实际用的版本**，以后别名换了指向，旧回答的名字不变。升级到这个功能之前的旧回答没有记录，名字不带版本号。
+- 设置的“用量”里，同一个别名的不同版本分开统计。
+
+想自己定清单：
 
 ```bash
-ROUNDTABLE_CLAUDE_MODELS=opus=Claude Opus,sonnet=Claude Sonnet,haiku=Claude Haiku
+ROUNDTABLE_CLAUDE_MODELS=opus,sonnet,haiku
 ```
 
-等号左边是别名或完整的模型 id，右边是显示名。
+每一项是别名或完整的模型 id，用逗号隔开。只写别名时名字和版本号照上面的办法自动来；写的是完整的模型 id（`claude-opus-4-5-20251101`）时，名字直接从 id 里读出来（“Claude Opus 4.5”），永远指向这一版。
 
-默认的显示名不带版本号（“Claude Opus”），因为圆桌不知道别名在你这台机器上指向哪一版。想看到版本号，就在显示名里自己写上，比如 `opus=Claude Opus 4.5`；想知道别名现在指向谁，跑一次 `claude -p hi --model opus --output-format json`，看输出里的 `modelUsage`。注意 Claude Code 升级后别名可能指向更新的版本，这时你写的显示名不会跟着变；要名实永远一致，等号左边就写完整的模型 id。
+也可以用 `别名=显示名` 自己起名字，比如 `opus=主力`。自己起的名字圆桌原样使用、不加版本号，别名实际指向哪个模型会写在选模型面板里那一项的说明里。
 
 ### 圆桌具体是怎么调用的
 

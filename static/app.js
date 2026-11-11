@@ -158,6 +158,10 @@ const HANDLERS = {
     }
     applyTurnState(ev);
   },
+  // 模型的显示名变了（刚知道 Claude 的别名指向哪个版本）：重新取一次清单
+  async models() {
+    try { setCatalog(await api('GET', '/api/models')); renderComposer(); } catch { /* 刷新页面时自然会取到 */ }
+  },
   turn: applyTurn, resp: applyResp, delta: applyDelta, act: applyAct, img: applyImg,
 };
 

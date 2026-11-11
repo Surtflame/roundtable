@@ -47,6 +47,10 @@ class Sink:
 
 
 STATE: dict = {"claude_rate_limit": None}
+
+
+def claude_model_seen(asked: str, actual: str) -> None:
+    """Claude Code 报出了 --model 给的名字实际解析成哪个模型 id。引擎启动时换成它自己的实现（记下来，界面上显示版本号）。"""
 # probe() 填。ok=False 时 why 是给人看的原因。
 CAPS: dict = {
     "claude": {"ok": False, "why": "还没检测", "version": "", "flags": set(), "isolate": []},
@@ -288,6 +292,15 @@ async def run_claude(model: str, effort: str, system: str, parts: list[dict], we
     need_sep = False
     seen_tools: set[str] = set()
     result = None
+    actual = ""                                   # 别名（opus 之类）实际解析成的模型 id
+
+    def saw_model(mid) -> None:
+        nonlocal actual
+        if not actual and isinstance(mid, str) and mid.startswith("claude-"):
+            actual = mid
+            sink.usage({"model": mid})            # 现在就记：中途被停掉的回答也知道是谁答的
+            claude_model_seen(model, mid)
+
     try:
         async for raw in proc.stdout:
             raw = raw.strip()
@@ -318,7 +331,11 @@ async def run_claude(model: str, effort: str, system: str, parts: list[dict], we
                     elif d.get("type") == "thinking_delta" and d.get("thinking"):
                         sink.thinking(d["thinking"])
                         got_thinking = True
+            elif t == "system" and ev.get("subtype") == "init":
+                saw_model(ev.get("model"))
             elif t == "assistant":
+                if not ev.get("parent_tool_use_id"):
+                    saw_model((ev.get("message") or {}).get("model"))     # 旧版本的 init 里没有 model 时靠这个
                 for b in (ev.get("message") or {}).get("content") or []:
                     if b.get("type") == "tool_use" and b.get("id") not in seen_tools:
                         seen_tools.add(b.get("id"))
@@ -379,6 +396,9 @@ async def quick_claude(prompt: str, model: str = "haiku", timeout: float = 60) -
     try:
         out, _ = await asyncio.wait_for(proc.communicate(prompt.encode()), timeout)
         d = json.loads(out)
+        used = [k for k in (d.get("modelUsage") or {}) if isinstance(k, str) and k.startswith("claude-")]
+        if len(used) == 1:
+            claude_model_seen(model, used[0])
         return "" if d.get("is_error") else (d.get("result") or "").strip()
     except Exception:
         return ""
