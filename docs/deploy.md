@@ -2,7 +2,7 @@
 
 圆桌是一个 Python 进程 + 一个 SQLite 文件，没有别的组件。前端不需要构建。
 
-先说清楚测试范围：作者只在 **Linux（Ubuntu 24.04，Python 3.12）** 上跑过。macOS 理论上能跑（Codex 外面那层 bubblewrap 沙箱没有），Windows 没有试过，建议用 WSL。
+先说清楚测试范围：作者只在 **Linux** 上跑过——日常用的是 Ubuntu 24.04 + Python 3.12；另外在一台全新的 Ubuntu 26.10（Python 3.14，1 核 1G 内存的小机器）上照这份文档从头装过一遍（装到 HTTPS 能访问、登录页正常、两个命令行工具检测通过为止；写这句话时那台机器上还没有登录模型账号，没有跑过真实回答）。macOS 理论上能跑（Codex 外面那层 bubblewrap 沙箱没有），Windows 没有试过，建议用 WSL。
 
 ## 1. 需要什么
 
@@ -96,6 +96,23 @@ chat.example.com {
 
 圆桌不用 WebSocket，代理不需要为它做特别配置。
 
+### 没有域名，只有一个公网 IP
+
+证书和 Google 登录都要一个域名：Google 的回调地址不接受裸 IP，也不接受 `http://`（`localhost` 除外）。没有自己的域名时，可以用“IP 即域名”的公共解析服务，比如 [sslip.io](https://sslip.io) 或 nip.io：`203-0-113-7.sslip.io` 这个名字会解析到 `203.0.113.7`，不用注册、不用配置。把它当成域名用就行：
+
+```
+203-0-113-7.sslip.io {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:8050 {
+		flush_interval -1
+	}
+}
+```
+
+`.env` 里写 `ROUNDTABLE_PUBLIC_URL=https://203-0-113-7.sslip.io`，Google 那边的回调地址写 `https://203-0-113-7.sslip.io/auth/google/callback`。Caddy 给这种名字申请 Let's Encrypt 证书实测是成的。
+
+要知道的代价：解析靠的是别人运营的免费服务。它停了，你的地址就打不开；运营它的人（或者劫持了它的人）理论上能把这个名字指到别的机器上去。换了 IP 也等于换了地址，三处都要跟着改。长期用还是买一个自己的域名。
+
 圆桌另外还会在 `127.0.0.1` 上开一个内部端口（MCP 网关，默认端口随机，见 [mcp.md](mcp.md)），只给它自己启动的命令行工具用。**不要在反向代理里转发它，也不要在防火墙上放行它。**
 
 配了反向代理之后：
@@ -157,5 +174,7 @@ Claude Code 和 Codex 是各自独立升级的。圆桌每次启动都会重新�
 **Claude / Codex 在终端里能用，在圆桌里说没登录**：服务是用另一个系统用户跑的，或者 `HOME` 不对。命令行工具的登录状态是跟着用户走的。
 
 **回答憋很久才一次性出来**：反向代理在缓冲，见上面第 6 节。
+
+**机器内存小（1–2G）**：每个正在生成的 Claude / Codex 回答是一个独立的命令行进程，一个要占几百 MB 内存。一次问好几个模型、再加互评，小机器会吃紧甚至被系统杀进程。加上交换分区，并把 `.env` 里的 `ROUNDTABLE_CONCURRENCY_CLAUDE`、`ROUNDTABLE_CONCURRENCY_CODEX` 调小（比如 2）：多出来的回答会排队，不会丢。
 
 **需要走代理才能访问模型服务**：在 `.env` 里设 `HTTPS_PROXY`（和需要的 `NO_PROXY`），圆桌自己的请求和两个命令行工具都会用它。

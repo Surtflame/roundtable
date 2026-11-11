@@ -34,9 +34,12 @@
 官方安装说明：<https://code.claude.com/docs/en/setup>。常见的装法：
 
 ```bash
-npm install -g @anthropic-ai/claude-code      # 需要 Node.js 18+
+curl -fsSL https://claude.ai/install.sh | bash       # 官方安装脚本，装到 ~/.local/bin/claude，不需要 Node.js
+# 或者：npm install -g @anthropic-ai/claude-code    # 需要 Node.js 18+
 claude --version
 ```
+
+用**跑圆桌的那个系统用户**来装和登录。安装脚本可能提示 `~/.local/bin` 不在 PATH 里：圆桌自己会去那里找，不影响；只是你在终端里敲 `claude` 之前要先把它加进 PATH。
 
 圆桌需要比较新的版本（要有 `--restricted` 或 `--setting-sources` 参数来做隔离）。版本太旧时这个后端会显示为不可用，并说明缺什么。
 
@@ -118,7 +121,8 @@ claude -p --model <别名> --input-format stream-json --output-format stream-jso
 官方仓库和安装说明：<https://github.com/openai/codex>。常见的装法：
 
 ```bash
-npm install -g @openai/codex
+curl -fsSL https://chatgpt.com/codex/install.sh | sh    # 官方安装脚本（独立安装版），不需要 Node.js
+# 或者：npm install -g @openai/codex
 codex --version
 ```
 
@@ -132,6 +136,15 @@ sudo dnf install bubblewrap        # Fedora
 ```
 
 没有 bubblewrap（比如 macOS）也能用，只是少一层隔离，启动日志和设置页会提醒。想强制“没有沙箱就不启用 Codex”，设 `ROUNDTABLE_CODEX_SANDBOX=bwrap`。
+
+装了 bubblewrap，`python -m roundtable check` 却说“bwrap 沙箱里启动 codex 失败”（报错里常带 `setting up uid map: Permission denied`）：多半是 Ubuntu 的 AppArmor 不让普通用户建用户命名空间（`sysctl kernel.apparmor_restrict_unprivileged_userns` 是 1），而系统里又没有给 `bwrap` 放行的 AppArmor 规则。Ubuntu 24.04 会遇到；比较新的 Ubuntu 自带放行规则（`/etc/apparmor.d/bwrap-userns-restrict`），不用管。两个办法：
+
+```bash
+# 办法一：整机关掉这项限制（简单，但对机器上所有程序都放开了）
+echo 'kernel.apparmor_restrict_unprivileged_userns = 0' | sudo tee /etc/sysctl.d/99-userns.conf
+sudo sysctl --system
+# 办法二：只给 bwrap 加一条 AppArmor 规则（参考新版 Ubuntu 的 bwrap-userns-restrict），这里不展开
+```
 
 > 实测过的组合是 Linux + 独立安装版的 Codex + bubblewrap。npm 安装版套沙箱的代码写了但没有在真机上测过；macOS 没有测过。遇到问题先设 `ROUNDTABLE_CODEX_SANDBOX=off` 确认是不是沙箱的原因，并欢迎提 issue。
 
