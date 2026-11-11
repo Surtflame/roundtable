@@ -6,11 +6,13 @@ parts 是引擎拼好的“中性”提示词片段：
   {"t":"text","s":...} / {"t":"image","f":file} / {"t":"pdf","f":file} / {"t":"doc","f":file}
 出错抛 BackendError；被取消时负责把子进程杀干净。
 
-隔离原则：聊天里的模型只能“说话 + 联网搜索 + 画图”，碰不到服务器。
-  - claude：--restricted，工具只留 WebSearch/WebFetch，不加载 MCP、设置文件、skills。
+隔离原则：聊天里的模型只能“说话 + 联网搜索 + 画图 + 用户在设置里接的 MCP 工具”，碰不到服务器。
+  - claude：--restricted，工具只留 WebSearch/WebFetch，不加载设置文件、skills，也不加载机器上配的 MCP。
   - codex：关掉 shell/插件/应用等工具，不读用户的 config.toml（或者把里面的 MCP 服务器逐个关掉），
     外面再套一层 bwrap（有的话），只看得到系统目录和 ~/.codex。
   - OpenRouter：纯 HTTP。
+  - MCP（见 mcp.py）：参数 mcp 是这次回答的 RunCtx，没接就是 None。claude / codex 只拿到本机网关的地址和
+    一次性的运行令牌，上游服务器的令牌不给它们；OpenRouter 的工具调用由这里的循环转给 RunCtx.call()。
 启动时 probe() 会看本机装的命令行工具支持哪些参数；隔离做不到的后端直接标成不可用，而不是降级硬跑。
 """
 import asyncio
@@ -18,6 +20,7 @@ import base64
 import json
 import os
 import re
+import secrets
 import shutil
 import signal
 import time
@@ -223,23 +226,60 @@ async def _feed_stdin(proc: asyncio.subprocess.Process, data: bytes) -> None:
 
 # ---------- Claude ----------
 
-async def run_claude(model: str, effort: str, system: str, parts: list[dict], web: bool, sink: Sink) -> None:
+def _mcp_ready(mcp) -> None:
+    err = mcp.gateway_error() if mcp else None
+    if err:
+        raise BackendError(err)
+
+
+def _mcp_env(mcp) -> dict:
+    """子进程的环境变量。接了 MCP 时保证本机网关不走代理。"""
+    env = config.cli_env()
+    if mcp:
+        for k in ("NO_PROXY", "no_proxy"):
+            env[k] = ",".join(x for x in (env.get(k, ""), "127.0.0.1,localhost") if x)
+    return env
+
+
+async def run_claude(model: str, effort: str, system: str, parts: list[dict], web: bool, sink: Sink,
+                     mcp=None) -> None:
     cap = CAPS["claude"]
     if not cap["ok"]:
         raise BackendError("Claude 用不了：" + cap["why"])
+    _mcp_ready(mcp)
+    if mcp and "--mcp-config" not in cap["flags"]:
+        raise BackendError("这个版本的 Claude Code 没有 --mcp-config 参数，接不了 MCP。请升级，或者先在设置里把 MCP 停用。")
     args = [config.CLAUDE_BIN, "-p", "--model", model, "--input-format", "stream-json",
             "--output-format", "stream-json", "--verbose", "--system-prompt", system] + _claude_common()
     if "--include-partial-messages" in cap["flags"]:
         args.append("--include-partial-messages")           # 逐字流式；没有就整段出来
-    args += ["--tools", "WebSearch,WebFetch", "--allowedTools", "WebSearch,WebFetch"] if web else ["--tools", ""]
+    builtin = ["WebSearch", "WebFetch"] if web else []
+    args += ["--tools", ",".join(builtin)]
+    env = _mcp_env(mcp)
+    mdir = None
+    if mcp:
+        # 只认这一个配置文件（--strict-mcp-config），里面只有本机网关；--allowedTools 逐个列出勾选过的工具
+        mdir = config.RUNS_DIR / ("mcp-" + secrets.token_hex(8))
+        mdir.mkdir(parents=True, mode=0o700)
+        fd = os.open(mdir / "mcp.json", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w") as f:
+            json.dump(mcp.claude_config(), f)
+        args += ["--mcp-config", str(mdir / "mcp.json")]
+        env["MAX_MCP_OUTPUT_TOKENS"] = "60000"
+    if builtin or mcp:
+        args += ["--allowedTools", ",".join(builtin + (mcp.claude_allowed() if mcp else []))]
     if effort and "--effort" in cap["flags"]:
         args += ["--effort", effort]
-    content = await asyncio.to_thread(parts_to_claude, parts)
-    line = json.dumps({"type": "user", "message": {"role": "user", "content": content}}, ensure_ascii=False)
-
-    proc = await asyncio.create_subprocess_exec(
-        *args, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-        cwd=str(config.EMPTY_DIR), env=config.cli_env(), start_new_session=True, limit=256 * 1024 * 1024)
+    try:
+        content = await asyncio.to_thread(parts_to_claude, parts)
+        line = json.dumps({"type": "user", "message": {"role": "user", "content": content}}, ensure_ascii=False)
+        proc = await asyncio.create_subprocess_exec(
+            *args, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            cwd=str(config.EMPTY_DIR), env=env, start_new_session=True, limit=256 * 1024 * 1024)
+    except BaseException:
+        if mdir:
+            shutil.rmtree(mdir, ignore_errors=True)
+        raise
     errbuf: list[str] = []
     err_task = asyncio.create_task(_drain_stderr(proc, errbuf))
     feed_task = asyncio.create_task(_feed_stdin(proc, line.encode() + b"\n"))
@@ -287,6 +327,8 @@ async def run_claude(model: str, effort: str, system: str, parts: list[dict], we
                             sink.activity({"kind": "search", "text": inp.get("query", "")})
                         elif b.get("name") == "WebFetch":
                             sink.activity({"kind": "fetch", "text": inp.get("url", "")})
+                        elif str(b.get("name") or "").startswith("mcp__"):
+                            pass                  # MCP 调用由 mcp.RunCtx.call 记（带参数和结果）
                         else:
                             sink.activity({"kind": "tool", "text": b.get("name", "")})
             elif t == "rate_limit_event":
@@ -296,9 +338,13 @@ async def run_claude(model: str, effort: str, system: str, parts: list[dict], we
                 result = ev
         await proc.wait()
     finally:
+        if mcp:
+            mcp.closed = True                     # 先关门再杀进程：CLI 收到 SIGTERM 时会把没做完的工具调用重发一遍
         await _kill(proc)
         for tk in (err_task, feed_task):
             tk.cancel()
+        if mdir:
+            shutil.rmtree(mdir, ignore_errors=True)
 
     if result is None:
         tail = "".join(errbuf)[-800:].strip()
@@ -442,8 +488,8 @@ def _bwrap_static(bwrap: str, binds: list[str]) -> list[str]:
 _MCP_NAME = re.compile(r"[A-Za-z0-9_-]+")
 
 
-def _codex_config_args() -> list[str]:
-    """不让聊天里的模型碰到你给 Codex 配的 MCP 服务器。
+def _codex_config_args(mcp=None) -> list[str]:
+    """不让聊天里的模型碰到你给 Codex 配的 MCP 服务器（网页设置里接的那些另算，见 mcp.py）。
 
     默认整个不读 ~/.codex/config.toml（--ignore-user-config，登录照常）。
     如果你要它读（ROUNDTABLE_CODEX_USER_CONFIG=on，比如自定义了模型供应商），
@@ -463,6 +509,8 @@ def _codex_config_args() -> list[str]:
     for name in servers:
         if not _MCP_NAME.fullmatch(name):
             raise BackendError(f"{path} 里的 MCP 服务器名字 {name!r} 没法安全地在命令行上关掉，所以不运行 Codex")
+        if mcp and name in mcp.servers:
+            raise BackendError(f"{path} 里有一个 MCP 服务器也叫 {name}，和网页设置里接的重名了。请把其中一个改名。")
         args += ["-c", f"mcp_servers.{name}.enabled=false"]
     return args
 
@@ -547,10 +595,11 @@ def _codex_clean(text: str) -> str:
 
 
 async def run_codex(model: str, effort: str, system: str, parts: list[dict], web: bool, sink: Sink,
-                    run_id: str, vision: bool = True) -> None:
+                    run_id: str, vision: bool = True, mcp=None) -> None:
     cap = CAPS["codex"]
     if not cap["ok"]:
         raise BackendError("Codex 用不了：" + cap["why"])
+    _mcp_ready(mcp)
     rundir = config.RUNS_DIR / run_id
     rundir.mkdir(parents=True, exist_ok=True)
     prompt, images = await asyncio.to_thread(parts_to_flat, parts, vision)
@@ -569,11 +618,20 @@ async def run_codex(model: str, effort: str, system: str, parts: list[dict], web
         args += ["-c", f"model_reasoning_effort={effort}"]
     for feat in cap["disable"]:
         args += ["--disable", feat]
-    args += _codex_config_args() + img_args + ["-"]
-
-    proc = await asyncio.create_subprocess_exec(
-        *args, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-        cwd=str(rundir), env=config.cli_env(), start_new_session=True, limit=256 * 1024 * 1024)
+    env = _mcp_env(mcp)
+    try:
+        args += _codex_config_args(mcp)
+        if mcp:
+            # 运行令牌走环境变量（bwrap 会原样带进沙箱），不出现在任何进程的命令行里
+            args += mcp.codex_args()
+            env["RT_MCP_TOKEN"] = mcp.token
+        args += img_args + ["-"]
+        proc = await asyncio.create_subprocess_exec(
+            *args, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            cwd=str(rundir), env=env, start_new_session=True, limit=256 * 1024 * 1024)
+    except BaseException:
+        shutil.rmtree(rundir, ignore_errors=True)
+        raise
     errbuf: list[str] = []
     err_task = asyncio.create_task(_drain_stderr(proc, errbuf))
     feed_task = asyncio.create_task(_feed_stdin(proc, prompt.encode()))
@@ -631,6 +689,8 @@ async def run_codex(model: str, effort: str, system: str, parts: list[dict], web
                         sink.image(p.read_bytes(), p.name)
                 shutil.rmtree(gdir, ignore_errors=True)
     finally:
+        if mcp:
+            mcp.closed = True                     # 先关门再杀进程：CLI 收到 SIGTERM 时会把没做完的工具调用重发一遍
         await _kill(proc)
         for tk in (err_task, feed_task):
             tk.cancel()
@@ -645,8 +705,28 @@ async def run_codex(model: str, effort: str, system: str, parts: list[dict], web
 
 # ---------- OpenRouter ----------
 
+def _or_merge_reasoning(acc: list[dict], items) -> None:
+    """流里的 reasoning_details 是一块一块来的，拼回完整的条目（下一轮要原样带回去，否则有的模型不认）。"""
+    for it in items or []:
+        if not isinstance(it, dict):
+            continue
+        cur = None
+        if it.get("index") is not None:
+            cur = next((x for x in acc if x.get("index") == it["index"] and x.get("type") == it.get("type")), None)
+        elif acc and acc[-1].get("type") == it.get("type") and acc[-1].get("index") is None:
+            cur = acc[-1]
+        if cur is None:
+            acc.append(dict(it))
+            continue
+        for k, v in it.items():
+            if k in ("text", "summary", "data") and isinstance(v, str) and isinstance(cur.get(k), str):
+                cur[k] += v
+            elif v is not None and cur.get(k) is None:
+                cur[k] = v
+
+
 async def run_openrouter(model: str, effort: str, system: str, parts: list[dict], web: bool, sink: Sink,
-                         info: dict | None = None) -> None:
+                         info: dict | None = None, mcp=None) -> None:
     key = config.openrouter_key()
     if not key:
         raise BackendError("没有配置 OPENROUTER_API_KEY")
@@ -654,20 +734,29 @@ async def run_openrouter(model: str, effort: str, system: str, parts: list[dict]
     content = await asyncio.to_thread(parts_to_openrouter, parts, bool(info.get("vision", True)))
     if len(content) == 1 and content[0]["type"] == "text":
         content = content[0]["text"]
-    payload: dict = {"model": model, "stream": True, "usage": {"include": True},
-                     "messages": [{"role": "system", "content": system}, {"role": "user", "content": content}]}
+    messages: list[dict] = [{"role": "system", "content": system}, {"role": "user", "content": content}]
+    base: dict = {"model": model, "stream": True, "usage": {"include": True}}
     if info.get("image_out"):
-        payload["modalities"] = ["image", "text"]
-        payload["messages"] = payload["messages"][1:]     # 画图模型多数不吃 system
+        base["modalities"] = ["image", "text"]
+        messages = messages[1:]                           # 画图模型多数不吃 system
     if effort and effort in (info.get("efforts") or []):
-        payload["reasoning"] = {"effort": effort}
+        base["reasoning"] = {"effort": effort}
     if web:
-        payload["plugins"] = [{"id": "web"}]
+        base["plugins"] = [{"id": "web"}]
+    tools = mcp.openai_tools() if mcp else []
     headers = {"Authorization": f"Bearer {key}", "X-Title": "Roundtable"}
     seen_images: set[int] = set()
-    usage = None
+    total = {"in": 0, "out": 0, "reasoning": 0, "cost": 0.0}
+    got = {"usage": False, "text": False, "thinking": False}
     timeout = httpx.Timeout(connect=20, read=600, write=120, pool=20)
-    async with httpx.AsyncClient(timeout=timeout) as client:
+
+    async def one_round(client: httpx.AsyncClient, payload: dict):
+        """发一次请求、把流读完。返回 (这一轮的文字, 工具调用, reasoning_details)。"""
+        text: list[str] = []
+        calls: dict[int, dict] = {}
+        details: list[dict] = []
+        usage = None
+        sep_text, sep_think = got["text"], got["thinking"]
         async with client.stream("POST", "https://openrouter.ai/api/v1/chat/completions",
                                  headers=headers, json=payload) as r:
             if r.status_code != 200:
@@ -695,9 +784,21 @@ async def run_openrouter(model: str, effort: str, system: str, parts: list[dict]
                 for c in ch.get("choices") or []:
                     d = c.get("delta") or {}
                     if d.get("reasoning"):
-                        sink.thinking(d["reasoning"])
+                        sink.thinking(("\n\n" if sep_think else "") + d["reasoning"])
+                        sep_think, got["thinking"] = False, True
                     if d.get("content"):
-                        sink.text(d["content"])
+                        sink.text(("\n\n" if sep_text else "") + d["content"])
+                        sep_text, got["text"] = False, True
+                        text.append(d["content"])
+                    _or_merge_reasoning(details, d.get("reasoning_details"))
+                    for tc in d.get("tool_calls") or []:
+                        if not isinstance(tc, dict):
+                            continue
+                        cur = calls.setdefault(tc.get("index") or 0, {"id": "", "name": "", "args": ""})
+                        fn = tc.get("function") or {}
+                        cur["id"] = cur["id"] or tc.get("id") or ""
+                        cur["name"] = cur["name"] or fn.get("name") or ""
+                        cur["args"] += fn.get("arguments") or ""
                     for im in d.get("images") or []:
                         url = (im.get("image_url") or {}).get("url") or ""
                         if url.startswith("data:") and "," in url:
@@ -715,10 +816,57 @@ async def run_openrouter(model: str, effort: str, system: str, parts: list[dict]
                             sink.activity({"kind": "cite", "text": uc.get("title") or uc["url"], "url": uc["url"]})
                     if c.get("finish_reason") == "error":
                         raise BackendError("OpenRouter：上游模型返回错误")
-    if usage:
-        det = usage.get("completion_tokens_details") or {}
-        sink.usage({"in": usage.get("prompt_tokens") or 0, "out": usage.get("completion_tokens") or 0,
-                    "reasoning": det.get("reasoning_tokens") or 0, "cost": usage.get("cost")})
+        if usage:
+            det = usage.get("completion_tokens_details") or {}
+            got["usage"] = True
+            total["in"] += usage.get("prompt_tokens") or 0
+            total["out"] += usage.get("completion_tokens") or 0
+            total["reasoning"] += det.get("reasoning_tokens") or 0
+            total["cost"] += usage.get("cost") or 0
+        return "".join(text), [calls[i] for i in sorted(calls)], details
+
+    async def call_tool(c: dict) -> str:
+        slug_x = mcp.fn.get(c["name"])
+        if not slug_x:
+            return "没有这个工具。"
+        try:
+            args = json.loads(c["args"]) if c["args"].strip() else {}
+        except ValueError:
+            return "工具参数不是合法的 JSON，没有调用。请重新给出参数。"
+        if not isinstance(args, dict):
+            return "工具参数必须是一个 JSON 对象，没有调用。"
+        res = await mcp.call(*slug_x, args)
+        return res["content"][0]["text"]
+
+    rounds = config.MCP_MAX_ROUNDS if tools else 1
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            for rnd in range(rounds):
+                payload = {**base, "messages": messages}
+                if tools:
+                    payload["tools"] = tools
+                    if rnd == rounds - 1:
+                        payload["tool_choice"] = "none"       # 最后一轮只许作答
+                text, calls, details = await one_round(client, payload)
+                if not calls or not mcp:
+                    break
+                if rnd == rounds - 1:
+                    sink.text(("\n\n" if got["text"] else "") + f"（模型和工具已经来回 {rounds} 轮，到上限了，先停在这里。）")
+                    break
+                for i, c in enumerate(calls):
+                    c["id"] = c["id"] or f"call_{rnd}_{i}"
+                msg = {"role": "assistant", "content": text or None, "tool_calls": [
+                    {"id": c["id"], "type": "function", "function": {"name": c["name"], "arguments": c["args"] or "{}"}}
+                    for c in calls]}
+                if details:
+                    msg["reasoning_details"] = details
+                messages.append(msg)
+                results = await asyncio.gather(*(call_tool(c) for c in calls))
+                messages += [{"role": "tool", "tool_call_id": c["id"], "content": res} for c, res in zip(calls, results)]
+    finally:
+        if got["usage"]:
+            sink.usage({"in": total["in"], "out": total["out"], "reasoning": total["reasoning"],
+                        "cost": total["cost"] if total["cost"] else None})
 
 
 async def openrouter_key_info() -> dict | None:

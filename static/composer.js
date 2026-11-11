@@ -1,6 +1,6 @@
 // 输入区：选模型、互评设置、附件、发送；以及模型选择器。
 import { S, on, emit, info, prov, shortName, EFFORT, PROV, cfgFromServer, saveSettings, localGet, localSet, convBusy } from './state.js';
-import { synthInstrItem } from './settings.js';
+import { synthInstrItem, openSettings } from './settings.js';
 import { h, icon, api, toast, menu, popover, closePopover, promptDialog, fmtSize, debounce } from './util.js';
 
 let box, ta, banner, chipsEl, attsEl, hintEl, barEl, fileInput, sendBtn, addBtn, presetBtn;
@@ -41,6 +41,7 @@ export function initComposer(el) {
   sendBtn.addEventListener('click', () => (convBusy() ? stopAll() : send()));
   on('busy', refreshSend);
   on('settings', renderComposer);
+  on('mcp', renderComposer);
   renderComposer();
 }
 
@@ -157,6 +158,15 @@ export function renderComposer() {
   kids.push(h('button', { class: 'tool txt' + (c.web ? ' on' : ''), type: 'button', 'aria-pressed': String(c.web),
     title: c.web ? '已允许联网搜索，点击关闭' : '已关闭联网搜索，点击开启',
     onclick: () => { c.web = !c.web; renderComposer(); } }, icon('globe'), h('span', { text: '联网' })));
+  const mc = S.mcp;
+  if (mc && (mc.on.length || mc.idle.length || mc.attention.length)) {
+    const tip = [mc.on.length ? `模型现在能用：${mc.on.map(x => `${x.name}（${x.tools} 个工具）`).join('、')}` : '现在没有工具给模型用',
+      mc.idle.length ? `接了但没勾工具：${mc.idle.join('、')}` : '', mc.attention.length ? `要处理（授权或出错）：${mc.attention.join('、')}` : '',
+      '点击去设置'].filter(Boolean).join('\n');
+    kids.push(h('button', { class: 'tool txt mcp' + (mc.tools ? ' on' : '') + (mc.attention.length ? ' warn' : ''), type: 'button', title: tip,
+      'aria-label': 'MCP 设置', onclick: () => openSettings('mcp') }, icon('plug'), h('span', { class: 'lbl', text: 'MCP' }),
+      mc.tools ? h('span', { text: String(mc.tools) }) : null));
+  }
   if (n > 1) {
     const seg = (mode, text, title) => h('button', { class: 'seg-b' + (c.mode === mode ? ' on' : ''), type: 'button', title,
       onclick: () => {
@@ -185,9 +195,16 @@ export function renderComposer() {
   kids.push(h('span', { class: 'grow' }), sendBtn);
   barEl.replaceChildren(...kids);
 
+  const hints = [];
   const blind = S.pending.some(p => (p.file ? p.file.kind === 'image' : p.url)) ? c.models.filter(m => info(m.key).vision === false) : [];
-  hintEl.hidden = !blind.length;
-  hintEl.textContent = blind.length ? `${blind.map(m => shortName(m.key)).join('、')} 不能看图，它${blind.length > 1 ? '们' : ''}只会收到文字部分。` : '';
+  if (blind.length) hints.push(`${blind.map(m => shortName(m.key)).join('、')} 不能看图，它${blind.length > 1 ? '们' : ''}只会收到文字部分。`);
+  if (mc && mc.tools) {
+    const bare = c.models.filter(m => prov(m.key) === 'or' && (info(m.key).tools === false || info(m.key).image_out));
+    if (bare.length) hints.push(`${bare.map(m => shortName(m.key)).join('、')} 不支持工具调用，用不了 MCP。`);
+    if (!mc.gateway && c.models.some(m => prov(m.key) !== 'or')) hints.push('MCP 网关没起来，Claude 和 ChatGPT 这次用不了 MCP。');
+  }
+  hintEl.hidden = !hints.length;
+  hintEl.textContent = hints.join(' ');
   ta.placeholder = S.cur && S.cur.turns.length ? '接着问…' : (n > 1 ? `同时问 ${n} 个模型…` : '问点什么…');
   refreshSend();
 }

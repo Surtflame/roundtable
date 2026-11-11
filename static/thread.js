@@ -307,6 +307,22 @@ function paintThink(r) {
 const httpUrl = s => (typeof s === 'string' && /^https?:\/\//i.test(s) ? s : null);
 function hostOf(u) { try { return new URL(u).host.replace(/^www\./, ''); } catch { return u; } }
 
+const pretty = s => { try { return JSON.stringify(JSON.parse(s), null, 2); } catch { return s || ''; } };
+
+// 一次 MCP 工具调用：点开看参数和结果
+function mcpItem(r, ui, a) {
+  const seen = (ui.mcp ||= new Set());
+  const open = seen.has(a.id);
+  const head = h('button', { class: 'act-item act-mcp' + (a.error ? ' err' : ''), type: 'button', 'aria-expanded': String(open),
+    onclick: () => { if (open) seen.delete(a.id); else seen.add(a.id); paintActs(r); } },
+  a.pending ? h('span', { class: 'spin' }) : icon('plug'), h('span', { text: a.text }),
+  h('span', { class: 'act-host', text: a.pending ? '调用中' : a.error ? '失败' : a.ms != null ? fmtDur(a.ms) : '' }));
+  if (!open) return head;
+  return [head, h('div', { class: 'act-mcp-b' },
+    h('div', { class: 'act-mcp-l', text: '参数' }), h('pre', { text: pretty(a.args) || '（无）' }),
+    a.pending ? null : [h('div', { class: 'act-mcp-l', text: a.error ? '出错' : '结果' }), h('pre', { text: a.error || a.result || '（空）' })])];
+}
+
 function paintActs(r) {
   const ref = refs.get(r.id);
   if (!ref) return;
@@ -321,11 +337,15 @@ function paintActs(r) {
   if (n('fetch')) bits.push(`读取 ${n('fetch')} 个网页`);
   if (cites.length) bits.push(`${cites.length} 个来源`);
   if (n('tool')) bits.push(`工具 ${n('tool')} 次`);
+  if (n('mcp')) bits.push(`MCP 工具 ${n('mcp')} 次`);
   const last = items[items.length - 1];
-  const prev = r.status !== 'running' ? '' : last.kind === 'search' ? `正在搜索：${last.text}` : last.kind === 'fetch' ? `正在读取：${hostOf(last.text)}` : '';
-  fold(ref.acts, ui.acts, 'globe', bits.join(' · ') || '联网', prev ? h('span', { class: 'fold-prev', text: prev }) : null,
+  const calling = items.filter(a => a.kind === 'mcp' && a.pending).pop();
+  const prev = r.status !== 'running' ? '' : calling ? `正在调用：${calling.text}` : last.kind === 'search' ? `正在搜索：${last.text}`
+    : last.kind === 'fetch' ? `正在读取：${hostOf(last.text)}` : '';
+  fold(ref.acts, ui.acts, items.every(a => a.kind === 'mcp') ? 'plug' : 'globe', bits.join(' · ') || '联网', prev ? h('span', { class: 'fold-prev', text: prev }) : null,
     () => { ui.acts = !ui.acts; paintActs(r); },
     () => h('div', { class: 'acts-b' }, [...items.filter(a => a.kind !== 'cite'), ...cites].map(a => {
+      if (a.kind === 'mcp') return mcpItem(r, ui, a);
       const url = httpUrl(a.url) || (a.kind === 'fetch' ? httpUrl(a.text) : null);
       const label = a.kind === 'cite' ? (a.text || hostOf(a.url)) : a.kind === 'fetch' ? (url ? hostOf(url) + new URL(url).pathname.slice(0, 60) : a.text) : a.text;
       return h('div', { class: 'act-item' }, icon(a.kind === 'search' ? 'search' : a.kind === 'tool' ? 'gear' : 'globe'),
@@ -466,8 +486,10 @@ export function applyAct(ev) {
   if (!r) return;
   r.activity ||= [];
   const a = ev.item;
-  if (r.activity.some(x => x.kind === a.kind && x.text === a.text && x.at === a.at)) return;
-  r.activity.push(a);
+  const i = a.id ? r.activity.findIndex(x => x.id === a.id) : -1;      // MCP 调用：开始和结束是同一条
+  if (i >= 0) r.activity[i] = a;
+  else if (r.activity.some(x => x.kind === a.kind && x.text === a.text && x.at === a.at)) return;
+  else r.activity.push(a);
   paintActs(r);
   keep();
 }

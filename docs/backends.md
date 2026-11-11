@@ -101,11 +101,13 @@ claude -p --model <别名> --input-format stream-json --output-format stream-jso
        --restricted                      （旧版本没有就用 --setting-sources ""）
        --strict-mcp-config --no-session-persistence --disable-slash-commands
        --tools "WebSearch,WebFetch"      （没开联网时是 --tools ""）
+       --mcp-config <临时文件> --allowedTools ...   （只在圆桌里接了 MCP 时才有）
 ```
 
 - 用的是**没有改动过的官方程序**，圆桌不读取、不保存、不转发你的 Claude 登录凭据，也不自己去连 Anthropic 的接口。
 - 工作目录是一个空目录；不加载你的 MCP 服务器、设置文件、技能、钩子；不写会话历史。
 - 模型能用的工具只有联网搜索和抓网页（开了“联网”时），没有命令行、没有读写文件。
+- 在圆桌的设置里接了 MCP 并勾了工具时（见 [mcp.md](mcp.md)），再加上那些工具：圆桌给它一份只指向本机网关的临时配置，令牌不在里面。
 
 ---
 
@@ -167,12 +169,14 @@ codex exec --json --skip-git-repo-check --ephemeral -s read-only
            -c developer_instructions=<圆桌的系统提示词>
            --disable shell_tool --disable unified_exec --disable apps --disable plugins ...
            --ignore-user-config --ignore-rules
+           -c mcp_servers.<名字>.url=... 等      （只在圆桌里接了 MCP 时才有）
 ```
 
 - 同样是没有改动过的官方程序，登录凭据由 Codex 自己管理。
 - 关掉了它执行命令、用插件、操作浏览器/电脑、开子代理等能力，只留下对话、联网搜索（开了“联网”时）和画图。当前版本的 Codex 如果没有关闭命令行工具的开关，圆桌直接不启用它，而不是凑合着跑。
 - 默认**不读你的 `~/.codex/config.toml`**（`--ignore-user-config`，登录不受影响）。原因是那里面可能配了 MCP 服务器，不拦的话聊天里的模型就能调用它们。副作用是你在 config.toml 里设的默认模型、推理强度之类对圆桌不生效——模型和强度在圆桌的界面里选。
 - 如果你必须让它读 config.toml（比如自定义了模型供应商），在 `.env` 里设 `ROUNDTABLE_CODEX_USER_CONFIG=on`。这时圆桌会读出里面的 MCP 服务器名字，逐个加 `-c mcp_servers.<名字>.enabled=false` 关掉；其它设置照常生效，它们的后果由你自己判断。
+- 想给模型接 MCP，请在圆桌的设置里接（见 [mcp.md](mcp.md)），不要指望 config.toml 里的那些。圆桌里接的服务器是通过 `-c` 参数单独交给 Codex 的，只指向本机网关。`ROUNDTABLE_CODEX_USER_CONFIG=on` 时，如果圆桌里某个服务器和 config.toml 里的重名，圆桌会报错而不是猜该用哪个。
 - 每次运行用一个单独的临时目录，跑完删掉。
 - Linux 上外面再套一层 bubblewrap 沙箱，细节见 [security.md](security.md)。
 

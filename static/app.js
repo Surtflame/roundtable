@@ -1,5 +1,5 @@
 // 入口：搭页面骨架、路由、服务器事件流。
-import { S, on, setCatalog, cfgFromServer, defaultCfg, applyTheme, localGet, localSet, saveSettings, findTurn } from './state.js';
+import { S, on, setCatalog, cfgFromServer, defaultCfg, applyTheme, localGet, localSet, saveSettings, findTurn, refreshMcp } from './state.js';
 import { h, icon, api, toast, setAuthLostHandler, dialog, debounce, closePopover } from './util.js';
 import { initThread, renderThread, toBottom, stickBottom, applyTurn, applyResp, applyDelta, applyAct, applyImg, applyTurnState } from './thread.js';
 import { initComposer, renderComposer, setCfg, startEdit, applyPreset, openPicker, focusInput, switchConv, addFiles, refreshSend } from './composer.js';
@@ -108,6 +108,13 @@ async function refreshList() {
 }
 
 function route() {
+  if (location.hash.startsWith('#/settings')) {
+    // 从 MCP 授权页回来：回到出发前的那个对话，再把设置打开在 MCP 那一节
+    let back = null;
+    try { back = sessionStorage.getItem('mcpBack'); sessionStorage.removeItem('mcpBack'); } catch { /* ignore */ }
+    history.replaceState(null, '', back && /^#\/c\/[\w-]+$/.test(back) ? back : '#/');
+    openSettings('mcp');
+  }
   const m = location.hash.match(/^#\/c\/([\w-]+)$/);
   if (m) { if (m[1] !== S.curId) openConv(m[1]); } else newChat();
 }
@@ -195,7 +202,7 @@ function build() {
       h('div', { class: 'composer-wrap' }, jump, composer,
         h('div', { class: 'foot-note', text: '模型会出错，重要的事请核对。多找几个模型互评能减少错误，但不能保证没有。' }))),
     veil);
-  initSide(side, { toggleSide, closeDrawer, openSettings });
+  initSide(side, { toggleSide, closeDrawer, openSettings: () => openSettings() });
   initThread({ root: thread, scroller, jump, hooks: { applyPreset, startEdit, openPicker } });
   initComposer(composer);
 
@@ -230,6 +237,7 @@ async function boot() {
     return;
   }
   S.settings = S.me.settings;
+  S.mcp = S.me.mcp || null;
   lastLayout = S.settings.layout;
   setCatalog(cat);
   S.convs = list.conversations;
@@ -257,6 +265,7 @@ async function boot() {
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) return;
     renderTop();
+    if (S.mcp) refreshMcp();
     if (es && es.readyState === EventSource.CLOSED) connect();
   });
   document.addEventListener('keydown', e => {

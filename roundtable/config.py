@@ -154,6 +154,18 @@ CONCURRENCY = {"claude": _int("ROUNDTABLE_CONCURRENCY_CLAUDE", 4, 1, 32),
                "or": _int("ROUNDTABLE_CONCURRENCY_OPENROUTER", 8, 1, 64)}
 
 
+# ---------- MCP（在网页的设置里接；默认一个都没有） ----------
+
+# 本机网关的端口：只听 127.0.0.1，给 claude / codex 子进程用，不要让反向代理转发它。0 = 让系统挑一个空闲的。
+MCP_GATEWAY_PORT = _int("ROUNDTABLE_MCP_PORT", 0, 0, 65535)
+MCP_CONNECT_TIMEOUT = 20          # 连接、握手、取工具表（秒）
+MCP_CALL_TIMEOUT = _int("ROUNDTABLE_MCP_CALL_TIMEOUT", 180, 5, 1800)    # 单次工具调用（秒）
+MCP_RESULT_CAP = 40_000           # 一次工具结果最多给模型多少字符
+MCP_MAX_CALLS = _int("ROUNDTABLE_MCP_MAX_CALLS", 60, 1, 1000)           # 一个回答里最多调用多少次工具
+MCP_MAX_ROUNDS = 16               # OpenRouter：模型和工具最多来回多少轮
+MCP_MAX_SERVERS = 20
+
+
 def openrouter_key() -> str:
     return _get("OPENROUTER_API_KEY")
 

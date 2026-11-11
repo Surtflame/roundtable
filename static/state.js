@@ -21,6 +21,7 @@ export const S = {
   narrow: false,
   searchQ: '',
   hits: null,
+  mcp: null,                 // 现在接着哪些 MCP（后端给的摘要）；没有就是 null
 };
 
 const subs = {};
@@ -80,6 +81,15 @@ export async function saveSettings(patch) {
     if (!S.settings.last_config) S.settings.last_config = last;
   } catch (e) { emit('toast', e.message, 'err'); }
   emit('settings');
+}
+
+// MCP 摘要变了（设置里改过，或者重新读了一次）
+export function setMcp(sum) {
+  S.mcp = sum || null;
+  emit('mcp');
+}
+export async function refreshMcp() {
+  try { setMcp((await api('GET', '/api/me')).mcp); } catch { /* 下次再说 */ }
 }
 
 export function localGet(k) { try { return localStorage.getItem(k); } catch { return null; } }

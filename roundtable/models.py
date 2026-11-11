@@ -84,6 +84,7 @@ def _or_entry(m: dict) -> dict:
             "vision": "image" in (arch.get("input_modalities") or []),
             "file_in": "file" in (arch.get("input_modalities") or []),
             "image_out": "image" in (arch.get("output_modalities") or []),
+            "tools": "tools" in sp,
             "web": True, "ctx": m.get("context_length"),
             "price_in": per_m(pr.get("prompt")), "price_out": per_m(pr.get("completion")),
             "created": m.get("created")}

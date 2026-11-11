@@ -1,6 +1,6 @@
 // 设置与用量。
-import { S, saveSettings, localGet, localSet, applyTheme, shortName, prov, PROV } from './state.js';
-import { h, icon, api, dialog, toast, fmtTok, fmtCost, fmtTime } from './util.js';
+import { S, saveSettings, setMcp, localGet, localSet, applyTheme, shortName, prov, PROV } from './state.js';
+import { h, icon, api, dialog, confirmDialog, toast, fmtTok, fmtCost, fmtTime } from './util.js';
 
 function seg(options, cur, onPick) {
   const el = h('div', { class: 'seg', role: 'group' });
@@ -104,7 +104,164 @@ export function editSynthInstr() {
   setTimeout(() => ta.focus(), 30);
 }
 
-export function openSettings() {
+// ---------- MCP ----------
+
+const MCP_STATUS = { ok: ['已连接', 'ok'], needs_auth: ['需要授权', 'warn'], error: ['出错', 'err'] };
+
+function mcpSection() {
+  const msgs = h('div', { class: 'mcp-msgs' });
+  const list = h('div', { class: 'mcp-list' }, h('div', { class: 'set-note' }, h('span', { class: 'spin' }), ' 读取中…'));
+  const addBox = h('div', { class: 'mcp-add' });
+  const sec = h('section', { class: 'mcp-sec' }, h('h3', { text: 'MCP' }),
+    h('div', { class: 'set-note', text: '把远程的 MCP 服务器接进来，接上之后对所有模型（Claude、ChatGPT、OpenRouter）都生效。默认一个都不接；接上以后，每个工具还要你勾了，模型才看得到。' }),
+    msgs, list, addBox);
+  let servers = [], ready = false, adding = false;
+  const open = new Set(), busy = new Set();
+
+  const apply = d => { servers = d.servers || []; setMcp(d.summary); draw(); };
+  const say = (text, ok) => msgs.append(h('div', { class: 'mcp-msg' + (ok ? ' ok' : ''), text }));
+  const run = async (sid, fn) => {
+    if (busy.has(sid)) return;
+    busy.add(sid);
+    draw();
+    try { await fn(); } catch (e) { toast(e.message, 'err'); }
+    busy.delete(sid);
+    draw();
+  };
+  const link = (text, fn) => h('button', { class: 'link-btn', type: 'button', text, onclick: fn });
+
+  function card(s) {
+    const [stText, stCls] = MCP_STATUS[s.status] || [s.status, 'err'];
+    const nOn = s.tools.filter(t => t.enabled).length, nChanged = s.tools.filter(t => t.changed).length;
+    const isOpen = open.has(s.id), isBusy = busy.has(s.id);
+    const url = `/api/mcp/servers/${s.id}`;
+    const patch = body => run(s.id, async () => apply(await api('PATCH', url, body)));
+    const setTools = pick => patch({ tools: Object.fromEntries(s.tools.map(t => [t.name, !!pick(t)])) });
+    const note = s.status !== 'ok' ? (s.error || '') : !s.enabled ? '已停用，模型看不到它。'
+      : !s.tools.length ? '这个服务器没有提供工具。'
+      : nOn ? `模型能用其中 ${nOn} 个工具（共 ${s.tools.length} 个）。` : `共 ${s.tools.length} 个工具，一个都没勾，模型现在看不到它。`;
+
+    const authorize = async () => {
+      if (!await confirmDialog('去授权', `接下来会跳到「${s.name}」的授权页（由它的服务器指定），登录并同意之后会自动回到这里。`, '继续')) return;
+      run(s.id, async () => {
+        const r = await api('POST', url + '/oauth/start');
+        try { sessionStorage.setItem('mcpBack', location.hash); } catch { /* ignore */ }
+        location.href = r.url;
+      });
+    };
+    const refresh = () => run(s.id, async () => {
+      const d = await api('POST', url + '/refresh');
+      apply(d);
+      const now = (d.servers || []).find(x => x.id === s.id);
+      const ch = now ? now.tools.filter(t => t.changed).length : 0;
+      if (d.error) toast(d.error, 'err');
+      else if (!now) toast('这个服务器已被移除', 'err');
+      else toast(ch ? `工具表已更新。有 ${ch} 个工具的说明或参数变了，已取消勾选，看过再勾。` : `工具表已更新，共 ${now.tools.length} 个工具`);
+      if (ch) open.add(s.id);
+    });
+    const remove = async () => {
+      if (!await confirmDialog('删除 MCP 服务器', `删除「${s.name}」？保存在这里的令牌会一起删掉，以后要用得重新添加。`, '删除', true)) return;
+      run(s.id, async () => { apply(await api('DELETE', url)); toast('已删除'); });
+    };
+
+    const tools = !isOpen || !s.tools.length ? null : h('div', { class: 'mcp-tools' },
+      h('div', { class: 'mcp-bulk' }, h('span', { class: 'set-note', text: '给模型用哪些：' }), link('全选', () => setTools(() => true)),
+        s.tools.some(t => t.ro) ? link('只选只读的', () => setTools(t => t.ro)) : null, link('全不选', () => setTools(() => false))),
+      s.tools.map(t => {
+        const box = h('input', { type: 'checkbox', checked: t.enabled, disabled: isBusy,
+          onchange: () => patch({ tools: { [t.name]: box.checked } }) });
+        const desc = h('span', { class: 'set-note mcp-tool-d', text: t.description || '（没有说明）' });
+        desc.addEventListener('click', e => { e.preventDefault(); desc.classList.toggle('full'); });
+        return h('label', { class: 'mcp-tool' + (t.changed ? ' changed' : '') }, box,
+          h('span', { class: 'mcp-tool-t' },
+            h('span', { class: 'mcp-tool-n' }, h('code', { text: t.name }), t.ro ? h('span', { class: 'badge dim', text: '只读' }) : null,
+              t.changed ? h('span', { class: 'badge warn', text: '说明变过' }) : null),
+            desc, t.params.length ? h('span', { class: 'mcp-tool-p', text: '参数：' + t.params.join('、') }) : null));
+      }),
+      h('div', { class: 'set-note', text: '「只读」是服务器自己标的，仅供参考。能写东西的工具（发消息、改数据），模型可能在你没明说的时候就去调，勾之前想一下。' }));
+
+    return h('div', { class: 'mcp-card' + (s.enabled ? '' : ' off'), 'data-sid': s.id },
+      h('div', { class: 'mcp-head' },
+        h('div', { class: 'set-t' },
+          h('div', { class: 'set-title' }, s.name, ' ', h('span', { class: 'badge ' + stCls, text: stText }),
+            nChanged ? [' ', h('span', { class: 'badge warn', text: `${nChanged} 个工具有变动` })] : null),
+          h('div', { class: 'set-note mcp-url', text: s.url }),
+          note ? h('div', { class: 'set-note' + (s.status !== 'ok' ? ' mcp-err' : ''), text: note }) : null),
+        toggle(s.enabled, v => patch({ enabled: v }))),
+      h('div', { class: 'mcp-ops' },
+        s.status === 'needs_auth' ? h('button', { class: 'btn sm primary', type: 'button', onclick: authorize }, '去授权') : null,
+        s.tools.length ? h('button', { class: 'btn sm', type: 'button', 'aria-expanded': String(isOpen),
+          onclick: () => { if (isOpen) open.delete(s.id); else open.add(s.id); draw(); } }, isOpen ? '收起工具' : '选择工具') : null,
+        h('button', { class: 'btn sm', type: 'button', disabled: isBusy, onclick: refresh }, isBusy ? h('span', { class: 'spin' }) : null, s.status === 'error' ? '重试' : '刷新工具'),
+        s.auth === 'oauth' && s.status !== 'needs_auth' ? link('重新授权', authorize) : null,
+        h('span', { class: 'grow' }),
+        h('button', { class: 'icon-btn', type: 'button', title: '删除这个服务器', 'aria-label': '删除', onclick: remove }, icon('trash'))),
+      tools);
+  }
+
+  function addForm() {
+    const inp = (ph, extra) => h('input', { class: 'input', type: 'text', placeholder: ph, autocomplete: 'off', spellcheck: 'false', ...extra });
+    const name = inp('名字（可不填）', { maxlength: '40' });
+    const url = inp('地址，例如 https://example.com/mcp', { inputmode: 'url', maxlength: '2000' });
+    const token = inp('令牌（API key / Bearer token）', { type: 'password', autocomplete: 'new-password' });
+    const header = inp('请求头名字，默认 Authorization');
+    const cid = inp('OAuth client id（服务器不支持自动注册时才要）');
+    const csec = inp('OAuth client secret（没有就空着）', { type: 'password', autocomplete: 'new-password' });
+    const err = h('div', { class: 'set-note mcp-err', hidden: true });
+    const ok = h('button', { class: 'btn primary', type: 'button', text: '添加' });
+    const submit = async () => {
+      if (ok.disabled) return;
+      if (!url.value.trim()) { url.focus(); return; }
+      ok.disabled = true;
+      ok.textContent = '正在连接…';
+      err.hidden = true;
+      try {
+        const d = await api('POST', '/api/mcp/servers', { name: name.value, url: url.value, token: token.value, header: header.value,
+          client_id: cid.value, client_secret: csec.value });
+        adding = false;
+        open.add(d.id);
+        apply(d);
+        const s = servers.find(x => x.id === d.id);
+        toast(!s ? '已添加' : s.status === 'needs_auth' ? '已添加，还要点「去授权」' : `已连接，共 ${s.tools.length} 个工具。勾上要给模型用的。`);
+        list.querySelector(`[data-sid="${d.id}"]`)?.scrollIntoView({ block: 'start' });
+      } catch (e) {
+        err.textContent = e.message;
+        err.hidden = false;
+        ok.disabled = false;
+        ok.textContent = '添加';
+      }
+    };
+    ok.addEventListener('click', submit);
+    for (const el of [name, url]) el.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing) submit(); });
+    setTimeout(() => url.focus(), 30);
+    return h('div', { class: 'mcp-form' },
+      h('div', { class: 'set-sub', text: '添加 MCP 服务器' }), url, name,
+      h('details', { class: 'mcp-adv' }, h('summary', { text: '高级：固定令牌、OAuth 客户端' }),
+        h('div', { class: 'set-note', text: '用固定令牌的服务器，把令牌填在这里。走 OAuth 的不用填，加完点「去授权」就行。' }), token, header, cid, csec),
+      h('div', { class: 'set-note', text: '只支持远程服务器（Streamable HTTP）。令牌保存在服务器上，不会交给模型。' }),
+      err,
+      h('div', { class: 'mcp-form-f' }, h('button', { class: 'btn', type: 'button', text: '取消', onclick: () => { adding = false; draw(); } }), ok));
+  }
+
+  function draw() {
+    if (!ready) return;
+    list.replaceChildren(...(servers.length ? servers.map(card) : [h('div', { class: 'set-note mcp-empty', text: '现在一个 MCP 都没接，模型用不到任何外部工具。' })]));
+    if (adding) { if (!addBox.firstChild || !addBox.firstChild.classList.contains('mcp-form')) addBox.replaceChildren(addForm()); }
+    else addBox.replaceChildren(h('button', { class: 'btn', type: 'button', onclick: () => { adding = true; draw(); } }, icon('plus'), '添加 MCP 服务器'));
+  }
+
+  api('GET', '/api/mcp/servers').then(d => {
+    ready = true;
+    for (const f of d.flash || []) { say(f.text, f.ok); if (f.sid) open.add(f.sid); }
+    for (const s of d.servers || []) if (s.tools.some(t => t.changed)) open.add(s.id);
+    apply(d);
+    const sid = (d.flash || []).map(f => f.sid).filter(Boolean).pop();
+    if (sid) setTimeout(() => list.querySelector(`[data-sid="${sid}"]`)?.scrollIntoView({ block: 'start' }), 80);
+  }).catch(e => list.replaceChildren(h('div', { class: 'set-note', text: /404/.test(e.message) ? '这个功能要等服务重启之后才能用。' : '读取失败：' + e.message })));
+  return sec;
+}
+
+export function openSettings(focus) {
   const s = S.settings;
   const ci = h('textarea', { class: 'input set-ci', rows: '4', maxlength: '8000', placeholder: '例如：用中文回答；先给结论再给理由；涉及数字要给出处。' });
   ci.value = s.custom_instructions || '';
@@ -132,6 +289,7 @@ export function openSettings() {
   api('GET', '/api/usage').then(u => usage.replaceChildren(...usageBox(u)))
     .catch(e => usage.replaceChildren(h('div', { class: 'set-note', text: '读取失败：' + e.message })));
 
+  const mcp = mcpSection();
   const body = h('div', { class: 'settings' },
     h('section', null, h('h3', { text: '自定义指示' }),
       h('div', { class: 'set-note', text: '每个模型每次回答前都会看到这段话。' }), ci, ciState),
@@ -145,8 +303,10 @@ export function openSettings() {
     h('section', null, h('h3', { text: '联网' }),
       row('OpenRouter 模型也联网搜索', `OpenRouter 的搜索按次另收费（大约每次几美分），默认关闭。${PROV.claude.name} 和 ${PROV.codex.name} 的联网搜索用的是它们自带的搜索，由输入框旁的「联网」开关控制。`,
         toggle(!!s.or_web, v => saveSettings({ or_web: v })))),
+    mcp,
     h('section', null, h('h3', { text: '预设' }), presets),
     h('section', null, h('h3', { text: '用量' }), usage),
     h('section', null, h('h3', { text: '登录' }), accountRow()));
   dialog('设置', body, { cls: 'wide' });
+  if (focus === 'mcp') requestAnimationFrame(() => mcp.scrollIntoView({ block: 'start' }));
 }

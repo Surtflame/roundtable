@@ -21,7 +21,7 @@ from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse, PlainTe
                                StreamingResponse)
 from starlette.datastructures import Headers, MutableHeaders
 
-from . import auth, backends, config, db, engine, files, models
+from . import auth, backends, config, db, engine, files, mcp, models
 
 BOOT = db.new_id()
 CSP = ("default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; "
@@ -109,6 +109,7 @@ async def lifespan(_app):
         print("提醒：还没有设密码，现在谁也登录不了。运行  python -m roundtable set-password", flush=True)
     engine.recover()
     await backends.probe()
+    await mcp.start_gateway()
     st = backends.status()
     print(f"圆桌 Roundtable：{config.PUBLIC_URL}（监听 {config.HOST}:{config.PORT}，登录方式 {config.AUTH_MODE}）", flush=True)
     for name in ("claude", "codex", "openrouter"):
@@ -119,6 +120,7 @@ async def lifespan(_app):
     for t in list(engine.RESP_TASKS.values()):
         t.cancel()
     await asyncio.sleep(0.3)
+    await mcp.stop_gateway()
 
 
 api = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
@@ -351,7 +353,7 @@ def settings_public() -> dict:
 async def me(request: Request):
     await ensure_defaults()
     return {"user": request.scope["state"]["user"], "auth_mode": config.AUTH_MODE, "boot": BOOT,
-            "settings": settings_public(), "session_days": config.SESSION_DAYS,
+            "settings": settings_public(), "session_days": config.SESSION_DAYS, "mcp": mcp.summary(),
             "limits": {"max_models": config.MAX_MODELS_PER_TURN, "max_upload": config.MAX_UPLOAD}}
 
 
@@ -568,6 +570,65 @@ async def del_file(fid: str):
     if f and f["conv_id"] is None:
         files.delete_file_rows([f])
     return {"ok": True}
+
+
+# ---------- MCP（设置里接的远程工具服务器） ----------
+
+@api.get("/api/mcp/servers")
+async def mcp_list():
+    return {**mcp.state(), "flash": mcp.pop_flash()}
+
+
+@api.post("/api/mcp/servers")
+async def mcp_add(request: Request):
+    d = await body_json(request)
+    f = {k: d.get(k) if isinstance(d.get(k), str) else "" for k in ("name", "url", "token", "header", "client_id",
+                                                                    "client_secret")}
+    try:
+        s = await mcp.add_server(**f)
+    except ValueError as e:
+        bad(str(e))
+    return {**mcp.state(), "id": s["id"]}
+
+
+@api.patch("/api/mcp/servers/{sid}")
+async def mcp_patch(sid: str, request: Request):
+    try:
+        mcp.patch_server(sid, await body_json(request))
+    except ValueError as e:
+        bad(str(e), 404)
+    return mcp.state()
+
+
+@api.post("/api/mcp/servers/{sid}/refresh")
+async def mcp_refresh(sid: str):
+    try:
+        await mcp.refresh_server(sid)
+    except ValueError as e:
+        return {**mcp.state(), "error": str(e)}
+    return mcp.state()
+
+
+@api.post("/api/mcp/servers/{sid}/oauth/start")
+async def mcp_oauth_start(sid: str):
+    try:
+        return {"url": mcp.oauth_start(sid)}
+    except ValueError as e:
+        bad(str(e))
+
+
+@api.get("/api/mcp/oauth/callback")
+async def mcp_oauth_callback(request: Request):
+    # 授权服务器把浏览器送回这里（顶层 GET 跳转，带着登录 Cookie，照样先过 Guard）。state 只能用一次，
+    # 而且只认本应用刚刚发起、还没过期的那一个，所以别人伪造的回调换不到任何东西。
+    await mcp.oauth_callback({k: v for k, v in request.query_params.items() if len(v) < 4000})
+    return RedirectResponse("/#/settings/mcp", status_code=303)
+
+
+@api.delete("/api/mcp/servers/{sid}")
+async def mcp_delete(sid: str):
+    await mcp.delete_server(sid)
+    return mcp.state()
 
 
 # ---------- 事件流（SSE） ----------

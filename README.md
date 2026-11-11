@@ -2,7 +2,7 @@
 
 一个自己部署、自己用的多模型聊天页面：把同一个问题同时交给几个模型，让它们**互相挑错、各自修订**，最后由你指定的一个模型**写一份综合稿**：哪些是大家都认同的，哪些地方说法不一样、各自怎么说。
 
-[English summary](#english) · [安装与部署](docs/deploy.md) · [登录怎么配](docs/login.md) · [模型后端与各家规则](docs/backends.md) · [安全说明](docs/security.md)
+[English summary](#english) · [安装与部署](docs/deploy.md) · [登录怎么配](docs/login.md) · [模型后端与各家规则](docs/backends.md) · [接外部工具（MCP）](docs/mcp.md) · [安全说明](docs/security.md)
 
 ![界面截图](docs/screenshot.png)
 
@@ -17,6 +17,7 @@
   - **OpenRouter**——按量付费，几百个模型
 - **附件**：图片、PDF（含扫描版）、Word / Excel / PowerPoint、文本和代码文件。
 - **联网搜索**、**画图**（支持的模型）、思考过程和搜索记录可展开查看。
+- **外部工具（MCP）**：在网页上接入远程 MCP 服务器，接一次对所有模型生效；支持固定令牌和 OAuth。默认一个都不接，接之前请读 [docs/mcp.md](docs/mcp.md) 里的风险说明。
 - **生成在服务器上进行**：关掉浏览器、手机锁屏都不影响，回来接着看。
 - 对话搜索、导出 Markdown、收藏模型、自定义指令、用量统计、深色模式、手机可用。
 - **不需要构建**：一个 Python 进程 + 一个 SQLite 文件；前端是原生 ES 模块，第三方库都放在仓库里，不连任何 CDN。
@@ -70,7 +71,8 @@ systemd、HTTPS、反向代理、备份、升级：[docs/deploy.md](docs/deploy.
 ## 安全上做了什么
 
 - 每个请求都在应用最外层检查登录，包括静态文件和推送流；不用 WebSocket。
-- 聊天里的模型只能说话、联网搜索、画图：命令执行、文件读写、MCP、插件都关掉了；Codex 在 Linux 上还多套一层 bubblewrap 沙箱。隔离做不到的后端会被直接停用，而不是带着缺口跑。
+- 聊天里的模型只能说话、联网搜索、画图：命令执行、文件读写、插件、你机器上给命令行工具配的 MCP 都关掉了；Codex 在 Linux 上还多套一层 bubblewrap 沙箱。隔离做不到的后端会被直接停用，而不是带着缺口跑。
+- 唯一的例外是你自己在网页上接进来、并且逐个勾选过的 MCP 工具。令牌留在圆桌这边，不交给模型。这一块的风险由你自己把握，见 [docs/mcp.md](docs/mcp.md)。
 - 跨站请求防护、严格的内容安全策略、模型输出清洗后才渲染。
 
 也有没防住和没验证过的地方，都写在 [docs/security.md](docs/security.md) 里了，部署前请读一遍。建议用一个专门的、没什么权限的系统用户来跑。
@@ -79,6 +81,7 @@ systemd、HTTPS、反向代理、备份、升级：[docs/deploy.md](docs/deploy.
 
 - 只在 **Linux（Ubuntu 24.04、Python 3.12）** 上测试过，配的是 Claude Code 2.1 和 Codex CLI 0.163。macOS 没有测过（没有 bubblewrap 沙箱）；Windows 没有测过。
 - Google 登录的流程用模拟的身份提供方完整测过，写这份文档时还没有拿真实的 Google 账号走过一遍。遇到问题请提 issue。
+- MCP 功能是用模拟的 MCP 服务器和模拟的 OAuth 授权服务器测的，没有对着各家真实的 MCP 服务逐一验证过。
 - 界面只有中文，给模型的系统提示词也是中文写的（模型会按你提问的语言回答）。
 - 单用户。没有账号体系、没有分享链接、没有多人协作。
 - Claude Code 和 Codex 的命令行参数会随版本变化；圆桌启动时会检测，但新版本可能需要这边跟着改。
@@ -101,7 +104,8 @@ systemd、HTTPS、反向代理、备份、升级：[docs/deploy.md](docs/deploy.
 - Runs continue on the server when you close the tab.
 - One Python process and one SQLite file. No build step, no CDN.
 - Three auth modes: `none` (loopback only), `google` (OIDC with an e-mail allowlist) and `password` (single password with lockout).
-- Chat models are restricted to talking, web search and image generation: no shell, no file access, no MCP servers or plugins; Codex additionally runs inside bubblewrap on Linux.
+- Chat models are restricted to talking, web search and image generation: no shell, no file access, no plugins, and none of the MCP servers configured for the CLIs on your machine; Codex additionally runs inside bubblewrap on Linux.
+- Optional **MCP tools**: add remote MCP servers (Streamable HTTP; static token or OAuth) in the web UI and tick the tools you want; they then work with every backend. Nothing is connected by default, and tokens stay on the server side. Read the risks in [docs/mcp.md](docs/mcp.md) first — tool calls are not confirmed one by one.
 
 The UI and the documentation are currently Chinese only. Quick start:
 

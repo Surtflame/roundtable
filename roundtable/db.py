@@ -66,6 +66,21 @@ CREATE TABLE IF NOT EXISTS files(
 );
 CREATE INDEX IF NOT EXISTS files_conv ON files(conv_id);
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS mcp_servers(
+  id TEXT PRIMARY KEY,
+  slug TEXT NOT NULL UNIQUE,         -- 模型看到的服务器名，[a-z0-9_]
+  name TEXT NOT NULL,
+  url TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  auth TEXT NOT NULL DEFAULT 'none', -- none | header | oauth
+  secret TEXT NOT NULL DEFAULT '{}', -- 令牌、OAuth 客户端和端点；任何接口都不往外给
+  tools TEXT NOT NULL DEFAULT '[]',  -- 工具表（说明、参数、是否勾选）
+  info TEXT NOT NULL DEFAULT '{}',
+  status TEXT NOT NULL DEFAULT 'ok', -- ok | needs_auth | error
+  error TEXT,
+  created_at REAL NOT NULL,
+  updated_at REAL NOT NULL
+);
 -- 登录相关。sessions.id 存的是 Cookie 值的 SHA-256，库泄露了也拿不到能用的 Cookie。
 CREATE TABLE IF NOT EXISTS sessions(
   id TEXT PRIMARY KEY,
