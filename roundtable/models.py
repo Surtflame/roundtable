@@ -229,6 +229,7 @@ async def openrouter_catalog(force: bool = False) -> list[dict]:
 
 
 async def catalog() -> dict:
+    await backends.codebuddy_ready()
     if backends.CAPS["codebuddy"]["account"]:
         backends.codebuddy_refresh_soon()
     else:

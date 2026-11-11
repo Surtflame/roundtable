@@ -529,6 +529,7 @@ def _codebuddy_error(result: dict) -> str:
 
 async def run_codebuddy(model: str, effort: str, system: str, parts: list[dict], web: bool, sink: Sink,
                         mcp=None) -> None:
+    await codebuddy_ready()
     cap = CAPS["codebuddy"]
     if not cap["ok"]:
         raise BackendError("CodeBuddy 用不了：" + cap["why"])
@@ -764,7 +765,31 @@ async def probe_codebuddy() -> None:
     if need - flags:
         cap["why"] = "CodeBuddy Code 版本太旧，缺少参数 " + " ".join(sorted(need - flags)) + "，请升级"
         return
-    cap.update(ok=True, why="")      # 模型清单另外问（codebuddy_refresh），要好几秒，不让启动等它
+    cap.update(ok=True, why="")
+    await codebuddy_refresh(force=True)
+
+
+_cb_probe: asyncio.Task | None = None
+
+
+def codebuddy_start() -> None:
+    """服务启动时在后台检测 CodeBuddy：要跑它三次（--help、--version、问模型清单），快的机器几秒，
+    小机器上十来秒，不让整个服务等它。"""
+    global _cb_probe
+
+    async def go() -> None:
+        await probe_codebuddy()
+        c = CAPS["codebuddy"]
+        print("  codebuddy: " + (f"可用 {c['version']}，能选 {len(c['models'])} 个模型" if c["ok"] else "未启用 —— " + c["why"]),
+              flush=True)
+
+    _cb_probe = asyncio.create_task(go())
+
+
+async def codebuddy_ready() -> None:
+    """后台那次检测还没完的话，等它完。"""
+    if _cb_probe and not _cb_probe.done():
+        await asyncio.shield(_cb_probe)
 
 
 # ---------- Codex ----------
@@ -929,10 +954,10 @@ async def _codex_builtin_models() -> list[dict]:
     return [m for m in models if isinstance(m, dict) and m.get("slug")] if isinstance(models, list) else []
 
 
-async def probe() -> None:
+async def probe(codebuddy: bool = True) -> None:
     for d in (config.FILES_DIR, config.RUNS_DIR, config.EMPTY_DIR):
         d.mkdir(parents=True, exist_ok=True)
-    await asyncio.gather(probe_claude(), probe_codex(), probe_codebuddy())
+    await asyncio.gather(probe_claude(), probe_codex(), *([probe_codebuddy()] if codebuddy else []))
 
 
 def _codex_search_text(item: dict) -> str:

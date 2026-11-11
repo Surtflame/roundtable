@@ -58,10 +58,7 @@ def main() -> int:
         from . import backends
         for w in warnings:
             print("提醒：" + w)
-        async def probe_all():
-            await backends.probe()
-            await backends.codebuddy_refresh(force=True)
-        asyncio.run(probe_all())
+        asyncio.run(backends.probe())
         st = backends.status()
         print(f"对外地址 {config.PUBLIC_URL}，监听 {config.HOST}:{config.PORT}，登录方式 {config.AUTH_MODE}，数据目录 {config.DATA}")
         if config.AUTH_MODE == "password" and not auth.has_password():

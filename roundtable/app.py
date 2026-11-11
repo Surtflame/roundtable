@@ -108,15 +108,19 @@ async def lifespan(_app):
     if config.AUTH_MODE == "password" and not auth.has_password():
         print("提醒：还没有设密码，现在谁也登录不了。运行  python -m roundtable set-password", flush=True)
     engine.recover()
-    await backends.probe()
+    slow_cb = bool(config.CODEBUDDY_BIN)             # 装了 CodeBuddy：它的检测慢，放到后台做
+    await backends.probe(codebuddy=not slow_cb)
     await mcp.start_gateway()
     st = backends.status()
     print(f"圆桌 Roundtable：{config.PUBLIC_URL}（监听 {config.HOST}:{config.PORT}，登录方式 {config.AUTH_MODE}）", flush=True)
     for name in ("claude", "codex", "codebuddy", "openrouter"):
+        if name == "codebuddy" and slow_cb:
+            continue                                # 检测完了它自己打这一行
         print(f"  {name}: " + ("可用 " + st[name].get("version", "") if st[name]["ok"] else "未启用 —— " + st[name]["why"]),
               flush=True)
     asyncio.create_task(models.openrouter_catalog())
-    asyncio.create_task(backends.codebuddy_refresh(force=True))
+    if slow_cb:
+        backends.codebuddy_start()
     yield
     for t in list(engine.RESP_TASKS.values()):
         t.cancel()
