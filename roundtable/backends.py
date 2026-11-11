@@ -1,5 +1,5 @@
-"""三个后端：claude -p（Claude Code）、codex exec（Codex CLI）、OpenRouter（HTTPS，按量）。
-哪个装了、配了就用哪个，一个都没有也能启动（只是没有模型可选）。
+"""四个后端：claude -p（Claude Code）、codex exec（Codex CLI）、codebuddy -p（腾讯 CodeBuddy Code）、
+OpenRouter（HTTPS，按量）。哪个装了、配了就用哪个，一个都没有也能启动（只是没有模型可选）。
 
 统一接口：run(model_id, effort, system, parts, web, sink, ...)。
 parts 是引擎拼好的“中性”提示词片段：
@@ -10,6 +10,8 @@ parts 是引擎拼好的“中性”提示词片段：
   - claude：--restricted，工具只留 WebSearch/WebFetch，不加载设置文件、skills，也不加载机器上配的 MCP。
   - codex：关掉 shell/插件/应用等工具，不读用户的 config.toml（或者把里面的 MCP 服务器逐个关掉），
     外面再套一层 bwrap（有的话），只看得到系统目录和 ~/.codex。
+  - codebuddy：工具只留联网搜索/抓网页（有图片时加一个看图工具），不读设置文件、钩子、说明文件、skills、插件，
+    也不加载机器上配的 MCP。它没有 --restricted 这样的总开关，靠的是下面 CODEBUDDY_ENV 和 _codebuddy_common 里那几项。
   - OpenRouter：纯 HTTP。
   - MCP（见 mcp.py）：参数 mcp 是这次回答的 RunCtx，没接就是 None。claude / codex 只拿到本机网关的地址和
     一次性的运行令牌，上游服务器的令牌不给它们；OpenRouter 的工具调用由这里的循环转给 RunCtx.call()。
@@ -56,6 +58,9 @@ CAPS: dict = {
     "claude": {"ok": False, "why": "还没检测", "version": "", "flags": set(), "isolate": []},
     "codex": {"ok": False, "why": "还没检测", "version": "", "disable": [], "flags": [], "sandbox": "off", "note": "",
               "wrap": [], "exe": [], "builtin_models": []},
+    # models / account 是问 CLI 问来的（见 codebuddy_refresh）
+    "codebuddy": {"ok": False, "why": "还没检测", "version": "", "flags": set(), "models": [], "account": None,
+                  "asked": False, "at": 0.0},
 }
 
 
@@ -440,6 +445,329 @@ async def probe_claude() -> None:
     cap.update(ok=True, why="")
 
 
+# ---------- CodeBuddy ----------
+# 腾讯的 CodeBuddy Code。命令行参数、stream-json 的事件格式都和 Claude Code 基本一样，所以这一段长得像上面那段。
+# 实测（2.183）出来的几处不一样，都是隔离要靠的东西，改之前先看 docs/backends.md 里“CodeBuddy 的隔离”：
+#   - --setting-sources 写空串等于没写，要写 none 才是“什么设置都不读”（钩子就在设置里）
+#   - 用户级的 CODEBUDDY.md、它自己的“长期记忆”不归 --setting-sources 管，各有一个环境变量
+#   - --tools 管的是全部内置工具；MCP 工具默认“延迟加载”（模型要先用 ToolSearch 才看得到），关掉延迟才直接可用
+#   - 抓网页默认先走它的远程接口、失败了从本机直接抓。本机直抓它自己会拦内网 IP，但拦不住“解析到内网的域名”
+#     （实测），所以默认关掉本机直抓；ROUNDTABLE_CODEBUDDY_LOCAL_FETCH=on 可以放开
+#   - --allowedTools / --permission-mode dontAsk 只管它认为“要问一声”的工具（比如抓网页：不点名就拒绝）；
+#     联网搜索和 MCP 工具它不问，不点名也照样执行（实测）。所以真正的闸门是 --tools 给了哪些内置工具、
+#     网关给了哪些 MCP 工具
+#   - 图片：有的模型直接收图，有的靠一个 ViewImage 工具转述，由 CLI 自己判断，所以有图时把 ViewImage 也放开
+
+CODEBUDDY_ENV = {
+    "CODEBUDDY_DISABLE_AUTO_MEMORY": "1",
+    "CODEBUDDY_DISABLE_SYSTEM_REMINDER_MD": "1",
+    "CODEBUDDY_SKIP_BUILTIN_MARKETPLACE": "1",
+    "CODEBUDDY_DEFER_TOOL_LOADING": "0",
+    "DISABLE_AUTOUPDATER": "1",
+}
+_cb_lock = asyncio.Lock()
+_cb_tasks: set = set()
+
+
+def _codebuddy_ttl() -> float:
+    """模型清单、登录状态隔多久重新问一次（秒）。还没登录时问得勤一点，登录完很快就能看到。"""
+    return 1800 if CAPS["codebuddy"]["account"] else 120
+
+
+def _codebuddy_env(mcp=None) -> dict:
+    env = {**_mcp_env(mcp), **CODEBUDDY_ENV}
+    if not config.CODEBUDDY_LOCAL_FETCH:
+        env["CODEBUDDY_WEBFETCH_DISABLE_LOCAL_FALLBACK"] = "1"
+    return env
+
+
+def _codebuddy_common() -> list[str]:
+    flags = CAPS["codebuddy"]["flags"]
+    # dontAsk：要人点头才能用的工具，没列进 --allowedTools 的直接拒绝（这里本来就没有人可以问）
+    return ["--setting-sources", "none", "--strict-mcp-config"] + (
+        ["--permission-mode", "dontAsk"] if "--permission-mode" in flags else []) + [
+        f for f in ("--no-session-persistence",) if f in flags]
+
+
+def parts_to_codebuddy(parts: list[dict]) -> list[dict]:
+    """和给 Claude 的一样，只是 PDF 不整份传（它会原样转给模型，国内的模型大多不收文件），改成抽出来的文字。"""
+    out: list[dict] = []
+
+    def add_image(data: str, mime: str, name: str) -> None:
+        _merge_text(out, f"[图片：{name}]")
+        out.append({"type": "image", "source": {"type": "base64", "media_type": mime, "data": data}})
+
+    for p in parts:
+        if p["t"] == "text":
+            _merge_text(out, p["s"])
+        elif p["t"] == "image":
+            add_image(files.read_b64(p["f"]), p["f"]["mime"], p["f"]["name"])
+        elif p["t"] == "pdf":
+            f = p["f"]
+            if (f.get("meta") or {}).get("scanned"):
+                _merge_text(out, f"[扫描版 PDF：{f['name']}，以下是前几页的图像]")
+                for i, pg in enumerate(files.pdf_page_images(f), 1):
+                    add_image(base64.b64encode(pg.read_bytes()).decode(), "image/jpeg", f"{f['name']} 第 {i} 页")
+            else:
+                _merge_text(out, _file_text_block(f))
+        elif p["t"] == "doc":
+            _merge_text(out, _file_text_block(p["f"]))
+    return out
+
+
+def _codebuddy_error(result: dict) -> str:
+    msg = str(result.get("result") or "；".join(str(e) for e in result.get("errors") or [])
+              or result.get("subtype") or "未知错误")
+    cats = {i.get("category") for i in result.get("errors_info") or [] if isinstance(i, dict)}
+    if "auth" in cats or "Authentication required" in msg:
+        CAPS["codebuddy"]["at"] = 0.0             # 下次取清单时重新问一遍登录状态
+        msg = "CodeBuddy 还没登录，或者登录过期了：在服务器上运行 codebuddy，按提示登录一次。（原始报错：" + msg + "）"
+    elif "quota" in cats:
+        msg = "CodeBuddy 的额度不够，或者被限频了。（原始报错：" + msg + "）"
+    return msg[:1500]
+
+
+async def run_codebuddy(model: str, effort: str, system: str, parts: list[dict], web: bool, sink: Sink,
+                        mcp=None) -> None:
+    cap = CAPS["codebuddy"]
+    if not cap["ok"]:
+        raise BackendError("CodeBuddy 用不了：" + cap["why"])
+    _mcp_ready(mcp)
+    if mcp and "--mcp-config" not in cap["flags"]:
+        raise BackendError("这个版本的 CodeBuddy 没有 --mcp-config 参数，接不了 MCP。请升级，或者先在设置里把 MCP 停用。")
+    content = await asyncio.to_thread(parts_to_codebuddy, parts)
+    builtin = (["WebSearch", "WebFetch"] if web else []) + (
+        ["ViewImage"] if any(b.get("type") == "image" for b in content) else [])
+    args = [config.CODEBUDDY_BIN, "-p", "--model", model, "--input-format", "stream-json",
+            "--output-format", "stream-json", "--system-prompt", system, "--tools", ",".join(builtin)]
+    args += _codebuddy_common()
+    if "--include-partial-messages" in cap["flags"]:
+        args.append("--include-partial-messages")
+    mdir = None
+    try:
+        if mcp:
+            mdir = config.RUNS_DIR / ("mcp-" + secrets.token_hex(8))
+            mdir.mkdir(parents=True, mode=0o700)
+            fd = os.open(mdir / "mcp.json", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "w") as f:
+                json.dump(mcp.claude_config(), f)       # 配置文件的格式和 Claude Code 的一样
+            args += ["--mcp-config", str(mdir / "mcp.json")]
+        if builtin or mcp:
+            # 一个名字一个参数：写成逗号连起来的一整串它不认（实测，抓网页会因为“没人批准”被拒）
+            args += ["--allowedTools", *builtin, *(mcp.claude_allowed() if mcp else [])]
+        if effort and "--effort" in cap["flags"]:
+            args += ["--effort", effort]
+        line = json.dumps({"type": "user", "message": {"role": "user", "content": content}}, ensure_ascii=False)
+        proc = await asyncio.create_subprocess_exec(
+            *args, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            cwd=str(config.EMPTY_DIR), env=_codebuddy_env(mcp), start_new_session=True, limit=256 * 1024 * 1024)
+    except BaseException:
+        if mdir:
+            shutil.rmtree(mdir, ignore_errors=True)
+        raise
+    errbuf: list[str] = []
+    err_task = asyncio.create_task(_drain_stderr(proc, errbuf))
+    feed_task = asyncio.create_task(_feed_stdin(proc, line.encode() + b"\n"))
+    got_text = False
+    got_thinking = False
+    need_sep = False
+    seen_tools: set[str] = set()
+    result = None
+    try:
+        async for raw in proc.stdout:
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                ev = json.loads(raw)
+            except ValueError:
+                continue
+            t = ev.get("type")
+            if t == "stream_event":
+                e = ev.get("event") or {}
+                et = e.get("type")
+                if et == "content_block_start":
+                    bt = (e.get("content_block") or {}).get("type")
+                    if bt == "text" and got_text:
+                        need_sep = True
+                    elif bt == "thinking" and got_thinking:
+                        sink.thinking("\n\n")
+                elif et == "content_block_delta":
+                    d = e.get("delta") or {}
+                    if d.get("type") == "text_delta" and d.get("text"):
+                        if need_sep:
+                            sink.text("\n\n")
+                            need_sep = False
+                        sink.text(d["text"])
+                        got_text = True
+                    elif d.get("type") == "thinking_delta" and d.get("thinking"):
+                        sink.thinking(d["thinking"])
+                        got_thinking = True
+            elif t == "assistant":
+                for b in (ev.get("message") or {}).get("content") or []:
+                    if b.get("type") == "tool_use" and b.get("id") not in seen_tools:
+                        seen_tools.add(b.get("id"))
+                        inp = b.get("input") or {}
+                        name = str(b.get("name") or "")
+                        if name == "WebSearch":
+                            sink.activity({"kind": "search", "text": str(inp.get("query") or "")})
+                        elif name == "WebFetch":
+                            sink.activity({"kind": "fetch", "text": str(inp.get("url") or "")})
+                        elif name == "ViewImage":
+                            sink.activity({"kind": "tool", "text": "看图"})
+                        elif name.startswith("mcp__"):
+                            pass                  # MCP 调用由 mcp.RunCtx.call 记（带参数和结果）
+                        else:
+                            sink.activity({"kind": "tool", "text": name})
+            elif t == "result":
+                result = ev
+        await proc.wait()
+    finally:
+        if mcp:
+            mcp.closed = True
+        await _kill(proc)
+        for tk in (err_task, feed_task):
+            tk.cancel()
+        if mdir:
+            shutil.rmtree(mdir, ignore_errors=True)
+
+    if result is None:
+        tail = "".join(errbuf)[-800:].strip()
+        raise BackendError(f"codebuddy 没有返回结果（退出码 {proc.returncode}）{('：' + tail) if tail else ''}")
+    u = result.get("usage") or {}
+    # 它报的 input_tokens 已经把缓存命中的算在里面了（和 Claude Code 不一样）；花的是额度（credits），不是钱
+    tot = ((result.get("_meta") or {}).get("codebuddy.ai/turnUsage") or {}).get("total") or {}
+    cr = tot.get("credits")
+    sink.usage({"in": u.get("input_tokens") or 0, "out": u.get("output_tokens") or 0,
+                **({"credits": cr} if isinstance(cr, (int, float)) and not isinstance(cr, bool) else {})})
+    if result.get("is_error"):
+        raise BackendError(_codebuddy_error(result))
+    if not got_text and result.get("result"):
+        sink.text(str(result["result"]))
+
+
+async def quick_codebuddy(prompt: str, model: str, timeout: float = 60) -> str:
+    """一次性小任务（起标题）。不带任何工具。失败返回空串。"""
+    if not CAPS["codebuddy"]["ok"]:
+        return ""
+    args = [config.CODEBUDDY_BIN, "-p", "--model", model, "--output-format", "json", "--tools", "",
+            "--system-prompt", "你是一个只输出结果、不加任何解释的小工具。"] + _codebuddy_common()
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *args, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+            cwd=str(config.EMPTY_DIR), env=_codebuddy_env(), start_new_session=True)
+    except OSError:
+        return ""
+    try:
+        out, _ = await asyncio.wait_for(proc.communicate(prompt.encode()), timeout)
+        d = json.loads(out)
+        d = d[-1] if isinstance(d, list) and d else d       # 有的版本给的是整串事件，最后一个才是结果
+        return "" if d.get("is_error") else str(d.get("result") or "").strip()
+    except Exception:
+        return ""
+    finally:
+        await _kill(proc)
+
+
+async def _codebuddy_ask() -> dict | None:
+    """用 SDK 的控制请求问 CLI 两件事：登录的是谁（initialize）、现在能选哪些模型（get_available_models）。
+    只是问它自己，不发模型请求、不花额度。→ {"account": …, "models": [CLI 给的原始模型说明]}，问不出来是 None。"""
+    args = [config.CODEBUDDY_BIN, "-p", "--input-format", "stream-json", "--output-format", "stream-json",
+            "--tools", ""] + _codebuddy_common()
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *args, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+            cwd=str(config.EMPTY_DIR), env=_codebuddy_env(), start_new_session=True, limit=32 * 1024 * 1024)
+    except OSError:
+        return None
+    got: dict = {}
+    try:
+        for rid, sub in (("rt-init", "initialize"), ("rt-models", "get_available_models")):
+            proc.stdin.write(json.dumps({"type": "control_request", "request_id": rid,
+                                         "request": {"subtype": sub}}).encode() + b"\n")
+        await proc.stdin.drain()                  # 标准输入不关：关了它就当没有要做的事，直接退出
+        async with asyncio.timeout(45):
+            async for raw in proc.stdout:
+                try:
+                    ev = json.loads(raw)
+                except ValueError:
+                    continue
+                r = ev.get("response") if ev.get("type") == "control_response" else None
+                if isinstance(r, dict) and r.get("request_id") in ("rt-init", "rt-models"):
+                    got[r["request_id"]] = r.get("response") if r.get("subtype") == "success" else None
+                    if len(got) == 2:
+                        break
+    except (TimeoutError, OSError):
+        pass
+    finally:
+        await _kill(proc)
+    init, lst = got.get("rt-init"), got.get("rt-models")
+    if not isinstance(init, dict) and not isinstance(lst, dict):
+        return None
+    init, lst = init or {}, lst or {}
+    # rawModels 带着完整说明（能不能看图、思考强度有哪几档、额度倍率）；旧版本没有这个请求，就只有名字
+    models = lst.get("rawModels") or [{"id": m.get("modelId"), "name": m.get("name")} for m in lst.get("availableModels") or []
+                                      if isinstance(m, dict)] or init.get("models") or []
+    return {"account": init.get("account") or None, "models": models}
+
+
+async def codebuddy_refresh(force: bool = False) -> None:
+    """模型清单和登录状态。隔一阵才重新问一次；问不出来就留着上一次的。"""
+    cap = CAPS["codebuddy"]
+    if not cap["ok"] or (not force and time.time() - cap["at"] < _codebuddy_ttl()):
+        return
+    async with _cb_lock:
+        if not force and time.time() - cap["at"] < _codebuddy_ttl():
+            return
+        r = await _codebuddy_ask()
+        if not isinstance(r, dict):
+            cap["at"] = time.time() - _codebuddy_ttl() + 60   # 一分钟后再试
+            return
+        ms = [m for m in r["models"] if isinstance(m, dict) and isinstance(m.get("id"), str) and m["id"]]
+        if ms:
+            cap["models"] = ms
+        cap.update(account=r["account"] or codebuddy_login_file(), asked=True, at=time.time())
+
+
+def codebuddy_refresh_soon() -> None:
+    """到点了就在后台重新问一遍，不让取模型清单的请求等它（问一次要两三秒）。"""
+    cap = CAPS["codebuddy"]
+    if cap["ok"] and not _cb_tasks and time.time() - cap["at"] >= _codebuddy_ttl():
+        t = asyncio.create_task(codebuddy_refresh())
+        _cb_tasks.add(t)
+        t.add_done_callback(_cb_tasks.discard)
+
+
+def codebuddy_login_file() -> bool:
+    """交互登录（/login）之后登录信息落在这个目录里。只看有没有文件，不读内容。"""
+    try:
+        return any(Path(config.HOME, ".local/share/CodeBuddyExtension/Data/Public/auth").glob("*.info"))
+    except OSError:
+        return False
+
+
+async def probe_codebuddy() -> None:
+    cap = CAPS["codebuddy"]
+    cap.update(ok=False, version="", flags=set(), models=[], account=None, asked=False, at=0.0)
+    if not config.CODEBUDDY_BIN:
+        cap["why"] = "没有找到 codebuddy 命令（没装 CodeBuddy Code，或者 ROUNDTABLE_CODEBUDDY_BIN=off）"
+        return
+    code, out = await _run_quick([config.CODEBUDDY_BIN, "--help"])
+    if code != 0:
+        cap["why"] = f"codebuddy --help 运行失败（它要 Node.js 18.20 以上）：{out.strip()[-200:]}"
+        return
+    flags = set(re.findall(r"(?<![\w-])--[a-zA-Z][a-zA-Z-]+", out))
+    cap["flags"] = flags
+    _, ver = await _run_quick([config.CODEBUDDY_BIN, "--version"])
+    cap["version"] = ver.strip().splitlines()[-1][:60] if ver.strip() else ""
+    need = {"--tools", "--system-prompt", "--input-format", "--output-format", "--setting-sources", "--strict-mcp-config"}
+    if need - flags:
+        cap["why"] = "CodeBuddy Code 版本太旧，缺少参数 " + " ".join(sorted(need - flags)) + "，请升级"
+        return
+    cap.update(ok=True, why="")
+    await codebuddy_refresh(force=True)
+
+
 # ---------- Codex ----------
 
 CODEX_DISABLE = ["shell_tool", "unified_exec", "apps", "plugins", "multi_agent", "skill_search", "browser_use",
@@ -605,7 +933,7 @@ async def _codex_builtin_models() -> list[dict]:
 async def probe() -> None:
     for d in (config.FILES_DIR, config.RUNS_DIR, config.EMPTY_DIR):
         d.mkdir(parents=True, exist_ok=True)
-    await asyncio.gather(probe_claude(), probe_codex())
+    await asyncio.gather(probe_claude(), probe_codex(), probe_codebuddy())
 
 
 def _codex_search_text(item: dict) -> str:
@@ -942,11 +1270,15 @@ def codex_logged_in() -> bool:
 
 def status() -> dict:
     """给前端看的后端状态。"""
-    c, x = CAPS["claude"], CAPS["codex"]
+    c, x, b = CAPS["claude"], CAPS["codex"], CAPS["codebuddy"]
     return {
         "claude": {"ok": c["ok"], "why": c["why"], "version": c["version"]},
         "codex": {"ok": x["ok"], "why": x["why"], "version": x["version"], "sandbox": x["sandbox"],
                   "note": x["note"], "logged_in": codex_logged_in() if x["ok"] else False},
+        # logged_in：None = 还没问出来（别乱报“没登录”）
+        "codebuddy": {"ok": b["ok"], "why": b["why"], "version": b["version"], "models": len(b["models"]),
+                      "found": bool(config.CODEBUDDY_BIN),      # 没装的话界面上提都不提它
+                      "logged_in": (bool(b["account"]) if b["asked"] else None) if b["ok"] else False},
         "openrouter": {"ok": bool(config.openrouter_key()),
                        "why": "" if config.openrouter_key() else "没有配置 OPENROUTER_API_KEY"},
     }

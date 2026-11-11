@@ -7,7 +7,7 @@
 ## 1. 需要什么
 
 - Python 3.11 或更新
-- 至少一个模型后端（可以先装好圆桌再配）：Claude Code、Codex CLI、OpenRouter 密钥，见 [backends.md](backends.md)
+- 至少一个模型后端（可以先装好圆桌再配）：Claude Code、Codex CLI、CodeBuddy Code、OpenRouter 密钥，见 [backends.md](backends.md)
 - Linux 上建议装 bubblewrap（`sudo apt install bubblewrap`），给 Codex 多一层沙箱
 - 要从别的设备访问的话：一个域名和 HTTPS（下面有 Caddy / nginx 的例子）
 
@@ -43,7 +43,7 @@ chmod 600 .env
 .venv/bin/python -m roundtable check
 ```
 
-它会告诉你：对外地址、监听地址、登录方式、数据目录，Google 登录要填的回调地址，以及三个后端各自能不能用、为什么不能用。配置不安全时（比如不要登录却监听了公网地址）它会直接拒绝启动并说明原因。
+它会告诉你：对外地址、监听地址、登录方式、数据目录，Google 登录要填的回调地址，以及各个后端能不能用、为什么不能用。配置不安全时（比如不要登录却监听了公网地址）它会直接拒绝启动并说明原因。
 
 ## 4. 启动
 
@@ -71,7 +71,7 @@ sudo systemctl enable --now roundtable
 journalctl -u roundtable -f        # 看日志
 ```
 
-注意服务要用**登录过 Claude Code / Codex 的那个用户**来跑，命令行工具的登录状态在那个用户的家目录里。
+注意服务要用**登录过 Claude Code / Codex / CodeBuddy 的那个用户**来跑，命令行工具的登录状态在那个用户的家目录里。
 
 重启服务时正在生成的回答会被打断（界面上会标出来，点“重新生成”即可）；已经生成的内容不会丢。
 

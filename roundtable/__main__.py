@@ -65,13 +65,17 @@ def main() -> int:
             print("提醒：还没有设密码。运行 python -m roundtable set-password")
         if config.AUTH_MODE == "google":
             print(f"Google 登录回调地址（填到 Google Cloud 控制台里）：{auth.redirect_uri()}")
-        for name, title in (("claude", "Claude Code"), ("codex", "Codex"), ("openrouter", "OpenRouter")):
+        for name, title in (("claude", "Claude Code"), ("codex", "Codex"), ("codebuddy", "CodeBuddy"),
+                            ("openrouter", "OpenRouter")):
             s = st[name]
             line = ("可用 " + s.get("version", "")).strip() if s["ok"] else "未启用 —— " + s["why"]
             if name == "codex" and s["ok"]:
                 line += f"；沙箱：{'bubblewrap' if s.get('sandbox') == 'bwrap' else '没有'}"
                 line += "" if s.get("logged_in") else "；看起来还没登录（运行 codex login）"
                 line += f"；{s['note']}" if s.get("note") else ""
+            if name == "codebuddy" and s["ok"]:
+                line += f"；能选 {s['models']} 个模型"
+                line += "；看起来还没登录（运行 codebuddy，按提示登录）" if s.get("logged_in") is False else ""
             print(f"  {title}: {line}")
         return 0
     print(__doc__.strip(), file=sys.stderr)

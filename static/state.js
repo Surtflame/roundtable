@@ -4,7 +4,7 @@ import { api } from './util.js';
 export const S = {
   me: null,
   settings: {},
-  cat: { claude: [], codex: [], openrouter: [], openrouter_ready: true, backends: {} },
+  cat: { claude: [], codex: [], codebuddy: [], openrouter: [], openrouter_ready: true, backends: {} },
   map: new Map(),            // key → 模型信息
   convs: [],                 // 对话摘要
   curId: null,
@@ -32,14 +32,15 @@ export const emit = (name, ...args) => { (subs[name] || []).forEach(fn => fn(...
 export const PROV = {
   claude: { name: 'Claude', sub: 'Claude Code', note: '经本机的 Claude Code，算在它登录的账号上' },
   codex: { name: 'ChatGPT', sub: 'Codex', note: '经本机的 Codex，算在它登录的账号上' },
+  codebuddy: { name: 'CodeBuddy', sub: 'CodeBuddy', note: '经本机的 CodeBuddy，算在它登录的账号上' },
   or: { name: 'OpenRouter', sub: 'OpenRouter', note: '按量计费' },
 };
 export const EFFORT = { none: '不思考', minimal: '极低', low: '低', medium: '中', high: '高', xhigh: '很高', max: '最高' };
 
 export function setCatalog(cat) {
-  S.cat = cat;
+  S.cat = { ...cat, codebuddy: cat.codebuddy || [] };
   S.map = new Map();
-  for (const m of [...cat.claude, ...cat.codex, ...cat.openrouter]) S.map.set(m.key, m);
+  for (const m of [...cat.claude, ...cat.codex, ...S.cat.codebuddy, ...cat.openrouter]) S.map.set(m.key, m);
 }
 export const prov = key => (key || '').split(':')[0];
 export function info(key) {
@@ -75,7 +76,7 @@ export function ruleIds(list) {
 export function defaultCfg() {
   const c = cfgFromServer(S.settings.last_config);
   if (c) return c;
-  const first = S.cat.claude.find(m => m.id === 'opus') || S.cat.claude[0] || S.cat.codex[0]
+  const first = S.cat.claude.find(m => m.id === 'opus') || S.cat.claude[0] || S.cat.codex[0] || S.cat.codebuddy[0]
     || (S.settings.or_favorites || []).map(k => S.map.get(k)).find(m => m && !m.image_out);
   return { models: first ? [{ key: first.key, effort: '' }] : [], mode: 'parallel', rounds: 1, synth: null, web: true, rules: [] };
 }

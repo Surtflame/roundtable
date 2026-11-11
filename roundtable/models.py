@@ -1,4 +1,4 @@
-"""模型目录。key 形如 claude:opus / codex:<模型名> / or:<OpenRouter 模型 id>。没启用的后端清单是空的。"""
+"""模型目录。key 形如 claude:opus / codex:<模型名> / codebuddy:<模型 id> / or:<OpenRouter 模型 id>。没启用的后端清单是空的。"""
 import json
 import time
 from pathlib import Path
@@ -146,6 +146,39 @@ def codex_catalog() -> list[dict]:
     return out
 
 
+def _cb_credits(mult: str) -> str:
+    """额度倍率（"0.79"）→ 界面上的一句话。同样多的字，倍率高的模型扣的额度多。"""
+    try:
+        return "不扣额度" if float(mult) == 0 else f"额度 ×{float(mult):g}"
+    except ValueError:
+        return ""
+
+
+def codebuddy_catalog() -> list[dict]:
+    """CodeBuddy 现在能选的模型，全列出来。清单是问 CLI 问来的（backends.codebuddy_refresh），跟着它登录的账号走。"""
+    cap = backends.CAPS["codebuddy"]
+    if not cap["ok"]:
+        return []
+    out, seen = [], set()
+    for x in cap["models"]:
+        name = str(x.get("name") or x["id"])
+        if name in seen:                            # 有重名的（Hy3 就有两个），后一个带上 id
+            name = f"{name}（{x['id']}）"
+        seen.add(str(x.get("name") or x["id"]))
+        r = x.get("reasoning") if isinstance(x.get("reasoning"), dict) else {}
+        efforts = [e for e in r.get("supportedEfforts") or [] if isinstance(e, str)]
+        credits = str(x.get("credits") or "").replace("credits", "").strip().lstrip("x×")
+        out.append({"key": f"codebuddy:{x['id']}", "provider": "codebuddy", "id": x["id"], "name": name,
+                    "desc": " · ".join(t for t in (str(x.get("descriptionZh") or ""),
+                                                  _cb_credits(credits)) if t),
+                    # 没声明档位的模型只有一个固定的思考强度，就不给选了
+                    "efforts": efforts if "--effort" in cap["flags"] else [],
+                    "default_effort": str(r.get("defaultEffort") or r.get("effort") or ""),
+                    # 不能直接收图的模型，CLI 会让它用看图工具转述，所以都算能看图
+                    "vision": True, "image_out": False, "web": True, "ctx": x.get("maxInputTokens")})
+    return out
+
+
 def _or_entry(m: dict) -> dict:
     arch = m.get("architecture") or {}
     pr = m.get("pricing") or {}
@@ -196,8 +229,12 @@ async def openrouter_catalog(force: bool = False) -> list[dict]:
 
 
 async def catalog() -> dict:
-    return {"claude": claude_catalog(), "codex": codex_catalog(), "openrouter": await openrouter_catalog(),
-            "favorites": db.get_setting("or_favorites", []), "backends": backends.status()}
+    if backends.CAPS["codebuddy"]["account"]:
+        backends.codebuddy_refresh_soon()
+    else:
+        await backends.codebuddy_refresh()          # 还没登录（或还没问出来）：等它，刚登录完刷新页面就能看到
+    return {"claude": claude_catalog(), "codex": codex_catalog(), "codebuddy": codebuddy_catalog(),
+            "openrouter": await openrouter_catalog(), "favorites": db.get_setting("or_favorites", []), "backends": backends.status()}
 
 
 async def lookup(key: str) -> dict | None:
@@ -206,6 +243,8 @@ async def lookup(key: str) -> dict | None:
         return next((m for m in claude_catalog() if m["id"] == mid), None)
     if prov == "codex":
         return next((m for m in codex_catalog() if m["id"] == mid), None)
+    if prov == "codebuddy":
+        return next((m for m in codebuddy_catalog() if m["id"] == mid), None)
     if prov == "or":
         return next((m for m in await openrouter_catalog() if m["id"] == mid), None)
     return None
@@ -218,6 +257,8 @@ def label_sync(key: str, actual: str | None = None) -> str:
         return claude_name(mid, actual)
     if prov == "codex":
         return next((m["name"] for m in codex_catalog() if m["id"] == mid), mid)
+    if prov == "codebuddy":
+        return next((m["name"] for m in codebuddy_catalog() if m["id"] == mid), mid)
     if prov == "or":
         return next((m["name"] for m in _or_cache["models"] if m["id"] == mid), mid)
     return key

@@ -212,7 +212,7 @@ export function renderComposer() {
   if (mc && mc.tools) {
     const bare = c.models.filter(m => prov(m.key) === 'or' && (info(m.key).tools === false || info(m.key).image_out));
     if (bare.length) hints.push(`${bare.map(m => shortName(m.key)).join('、')} 不支持工具调用，用不了 MCP。`);
-    if (!mc.gateway && c.models.some(m => prov(m.key) !== 'or')) hints.push('MCP 网关没起来，Claude 和 ChatGPT 这次用不了 MCP。');
+    if (!mc.gateway && c.models.some(m => prov(m.key) !== 'or')) hints.push('MCP 网关没起来，Claude、ChatGPT、CodeBuddy 这次用不了 MCP。');
   }
   hintEl.hidden = !hints.length;
   hintEl.textContent = hints.join(' ');
@@ -401,6 +401,9 @@ export function openPicker(anchor, { multi = false, isSel = () => false, onPick,
     off('Claude', bk.claude);
     sect('ChatGPT', PROV.codex.note, S.cat.codex.filter(hit));
     off('ChatGPT', bk.codex);
+    const cb = bk.codebuddy || {};
+    sect('CodeBuddy', PROV.codebuddy.note + (cb.logged_in === false ? '（看起来还没登录）' : ''), S.cat.codebuddy.filter(hit));
+    if (cb.found) off('CodeBuddy', cb);
     const favKeys = S.settings.or_favorites || [];
     const favs = favKeys.map(k => S.map.get(k)).filter(m => m && hit(m));
     if (!S.cat.openrouter_ready) { off('OpenRouter', bk.openrouter || { ok: false, why: '没有配置 OPENROUTER_API_KEY' }); }

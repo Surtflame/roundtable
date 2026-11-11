@@ -51,6 +51,10 @@ function usageBox(u) {
   st('Claude Code', bk.claude, '');
   st('Codex', bk.codex, bk.codex && bk.codex.ok ? [bk.codex.logged_in ? '' : '看起来还没登录（在服务器上运行 codex login）',
     bk.codex.sandbox === 'bwrap' ? '在 bubblewrap 沙箱里运行' : '没有沙箱', bk.codex.note].filter(Boolean).join('；') : '');
+  if (bk.codebuddy && bk.codebuddy.found) {
+    st('CodeBuddy', bk.codebuddy, [`能选 ${bk.codebuddy.models} 个模型`,
+      bk.codebuddy.logged_in === false ? '看起来还没登录（在服务器上运行 codebuddy，按提示登录）' : ''].filter(Boolean).join('；'));
+  }
 
   if (u.by_model.length) {
     kids.push(h('div', { class: 'set-sub', text: '近 30 天各模型' }),
@@ -113,7 +117,7 @@ function mcpSection() {
   const list = h('div', { class: 'mcp-list' }, h('div', { class: 'set-note' }, h('span', { class: 'spin' }), ' 读取中…'));
   const addBox = h('div', { class: 'mcp-add' });
   const sec = h('section', { class: 'mcp-sec' }, h('h3', { text: 'MCP' }),
-    h('div', { class: 'set-note', text: '把远程的 MCP 服务器接进来，接上之后对所有模型（Claude、ChatGPT、OpenRouter）都生效。默认一个都不接；接上以后，每个工具还要你勾了，模型才看得到。' }),
+    h('div', { class: 'set-note', text: '把远程的 MCP 服务器接进来，接上之后对所有模型（Claude、ChatGPT、CodeBuddy、OpenRouter）都生效。默认一个都不接；接上以后，每个工具还要你勾了，模型才看得到。' }),
     msgs, list, addBox);
   let servers = [], ready = false, adding = false;
   const open = new Set(), busy = new Set();

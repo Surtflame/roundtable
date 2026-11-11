@@ -112,7 +112,7 @@ async def lifespan(_app):
     await mcp.start_gateway()
     st = backends.status()
     print(f"圆桌 Roundtable：{config.PUBLIC_URL}（监听 {config.HOST}:{config.PORT}，登录方式 {config.AUTH_MODE}）", flush=True)
-    for name in ("claude", "codex", "openrouter"):
+    for name in ("claude", "codex", "codebuddy", "openrouter"):
         print(f"  {name}: " + ("可用 " + st[name].get("version", "") if st[name]["ok"] else "未启用 —— " + st[name]["why"]),
               flush=True)
     asyncio.create_task(models.openrouter_catalog())
@@ -314,6 +314,7 @@ def default_presets(cat: dict, favorites: list[str]) -> list[dict]:
         return next((m["key"] for m in lst if m["id"] == prefer), lst[0]["key"] if lst else None)
     have = {m["key"]: m for m in cat["openrouter"]}
     picks = [(pick(cat["claude"], "opus"), "Claude"), (pick(cat["codex"], ""), "GPT"),
+             (pick(cat["codebuddy"], ""), "CodeBuddy"),
              (next((k for k in favorites if k in have and not have[k].get("image_out")), None), "OpenRouter")]
     picks = [(k, n) for k, n in picks if k]
     # 预设名不带版本号，免得过时
@@ -323,9 +324,10 @@ def default_presets(cat: dict, favorites: list[str]) -> list[dict]:
         out.append({"name": " × ".join(n for _, n in two) + " 互评", "models": [{"key": k} for k, _ in two],
                     "mode": "review", "rounds": 1, "synth": two[0][0]})
     if len(picks) >= 3:
-        out.append({"name": "三方会诊", "models": [{"key": k} for k, _ in picks], "mode": "review", "rounds": 1,
-                    "synth": picks[0][0]})
-        out.append({"name": "三家各答各的", "models": [{"key": k} for k, _ in picks], "mode": "parallel"})
+        three = picks[:3]
+        out.append({"name": "三方会诊", "models": [{"key": k} for k, _ in three], "mode": "review", "rounds": 1,
+                    "synth": three[0][0]})
+        out.append({"name": "三家各答各的", "models": [{"key": k} for k, _ in three], "mode": "parallel"})
     return out
 
 
@@ -334,7 +336,7 @@ async def ensure_defaults() -> None:
     if db.get_setting("or_favorites") is None and cat["openrouter"]:
         have = {m["id"] for m in cat["openrouter"]}
         db.set_setting("or_favorites", [f"or:{i}" for i in DEFAULT_FAVORITES if i in have])
-    if db.get_setting("presets") is None and (cat["claude"] or cat["codex"] or cat["openrouter"]):
+    if db.get_setting("presets") is None and (cat["claude"] or cat["codex"] or cat["codebuddy"] or cat["openrouter"]):
         db.set_setting("presets", default_presets(cat, db.get_setting("or_favorites", [])))
 
 
@@ -362,7 +364,7 @@ async def me(request: Request):
 @api.get("/api/models")
 async def get_models(refresh: int = 0):
     if refresh:
-        await models.openrouter_catalog(force=True)
+        await asyncio.gather(models.openrouter_catalog(force=True), backends.codebuddy_refresh(force=True))
     await ensure_defaults()
     cat = await models.catalog()
     cat["openrouter_ready"] = bool(config.openrouter_key())

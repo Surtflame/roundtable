@@ -11,9 +11,10 @@
 - **并排回答**：一条消息同时发给最多 6 个模型（可调），各答各的，边生成边显示。
 - **互评与修订**：每个模型看到其他模型的回答，指出问题，再修订自己的答案。可以设 1–3 轮，也可以事后对某一轮追加。
 - **综合**：指定一个模型读完所有人的最终版本，像写文献综述那样整理成一份：共识是什么、分歧在哪里、每一方（点名）怎么说，最后才是综合者自己更支持谁。默认不会为了给出统一答案而把分歧抹平。可以加一段自己的“综合要求”改变写法，比如只看分歧，或者反过来要一份合并好的答案。
-- **三种后端，装了哪个用哪个**：
+- **四种后端，装了哪个用哪个**：
   - **Claude Code**（`claude -p`）——用你自己的 Claude 订阅或 API 密钥
   - **Codex CLI**（`codex exec`）——用你自己的 ChatGPT 订阅或 API 密钥
+  - **CodeBuddy Code**（`codebuddy -p`，腾讯）——用你自己的 CodeBuddy / WorkBuddy 订阅，国内版里是混元、DeepSeek、GLM、Kimi 等
   - **OpenRouter**——按量付费，几百个模型
 - **附件**：图片、PDF（含扫描版）、Word / Excel / PowerPoint、文本和代码文件。
 - **联网搜索**、**画图**（支持的模型）、思考过程和搜索记录可展开查看。
@@ -83,9 +84,10 @@ systemd、HTTPS、反向代理、备份、升级：[docs/deploy.md](docs/deploy.
 - 只在 **Linux** 上测试过：Ubuntu 24.04 + Python 3.12，配的是 Claude Code 2.1 和 Codex CLI 0.163；另在全新的 Ubuntu 26.10 + Python 3.14 上从头部署过一遍（Codex CLI 0.167；只验证到能启动、检测通过，没有在上面跑真实回答）。macOS 没有测过（没有 bubblewrap 沙箱）；Windows 没有测过。
 - Google 登录的流程用模拟的身份提供方完整测过，真实的 Google 账号只在一次部署上走通过（公网 IP + sslip.io 域名）。遇到问题请提 issue。
 - MCP 功能是用模拟的 MCP 服务器和模拟的 OAuth 授权服务器测的，没有对着各家真实的 MCP 服务逐一验证过。
+- CodeBuddy 后端是让 `codebuddy`（2.183.0）把请求发到一个模拟的模型接口上测的，作者没有在真实的 CodeBuddy 账号下跑过，见 [docs/backends.md](docs/backends.md) 里的“测试范围”。
 - 界面只有中文，给模型的系统提示词也是中文写的（模型会按你提问的语言回答）。
 - 单用户。没有账号体系、没有分享链接、没有多人协作。
-- Claude Code 和 Codex 的命令行参数会随版本变化；圆桌启动时会检测，但新版本可能需要这边跟着改。
+- Claude Code、Codex、CodeBuddy 的命令行参数会随版本变化；圆桌启动时会检测，但新版本可能需要这边跟着改。
 - 数据库升级只会自动补上新增的表和列，没有更完整的迁移机制，升级前请备份数据目录。
 
 ## 许可
@@ -100,7 +102,7 @@ systemd、HTTPS、反向代理、备份、升级：[docs/deploy.md](docs/deploy.
 
 **Roundtable** is a small self-hosted chat UI for asking several LLMs the same question at once, having them **critique each other and revise**, and then letting one model you pick **write a synthesis** — what they agree on, where they differ and who said what — without flattening the disagreements. You can add your own instructions for the synthesis.
 
-- Backends: **Claude Code** (`claude -p`), **Codex CLI** (`codex exec`) and **OpenRouter**. Use whichever you have; the two CLIs are the unmodified official binaries, run as subprocesses under your own login.
+- Backends: **Claude Code** (`claude -p`), **Codex CLI** (`codex exec`), Tencent's **CodeBuddy Code** (`codebuddy -p`) and **OpenRouter**. Use whichever you have; the CLIs are the unmodified official binaries, run as subprocesses under your own login.
 - Attachments (images, PDF, Office documents, text/code), web search, image output, visible reasoning/search traces.
 - Runs continue on the server when you close the tab.
 - One Python process and one SQLite file. No build step, no CDN.

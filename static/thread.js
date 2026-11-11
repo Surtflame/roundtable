@@ -58,7 +58,7 @@ function hero() {
     h('div', { class: 'hero-mark', html: MARK }),
     h('h1', { text: '今天想让谁来回答？' }),
     h('p', { text: '在下面选一个或几个模型。多个模型可以各答各的，也可以互相评审，最后合成一份结论。' }),
-    S.map.size ? null : h('p', { class: 'hero-warn', text: '还没有可用的模型：Claude Code、Codex、OpenRouter 至少要配好一个。原因见左下角设置里的「用量」，配法见 docs/backends.md。' }),
+    S.map.size ? null : h('p', { class: 'hero-warn', text: '还没有可用的模型：Claude Code、Codex、CodeBuddy、OpenRouter 至少要配好一个。原因见左下角设置里的「用量」，配法见 docs/backends.md。' }),
     ps.length ? h('div', { class: 'hero-presets' }, ps.map(p => h('button', { class: 'preset', type: 'button', onclick: () => hooks.applyPreset(p) },
       h('span', { class: 'preset-dots' }, p.models.map(m => h('span', { class: 'dot', data: { prov: prov(m.key) } }))),
       h('span', { class: 'preset-name', text: p.name }),
@@ -399,6 +399,7 @@ function paintFoot(t, r) {
     if (u.ms) bits.push(fmtDur(u.ms));
     if (u.in || u.out) bits.push(`${fmtTok(u.in || 0)} → ${fmtTok(u.out || 0)} tok`);
     if (u.cost) bits.push(`$${fmtCost(u.cost)}`);
+    if (typeof u.credits === 'number') bits.push(`${+u.credits.toFixed(2)} 额度`);
     if (u.searches) bits.push(`搜索 ${u.searches} 次`);
     if (u.cached) tip.push(`其中缓存命中 ${fmtTok(u.cached)} tok`);
     if (u.reasoning) tip.push(`思考 ${fmtTok(u.reasoning)} tok`);

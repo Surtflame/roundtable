@@ -467,7 +467,7 @@ async def run_response(resp_id: str) -> None:
         web = bool(cfg.get("web"))
         async with _sem(provider):
             parts = build_parts(resp, turn)
-            if provider in ("claude", "codex") or (provider == "or" and info.get("tools") and not info.get("image_out")):
+            if provider in ("claude", "codex", "codebuddy") or (provider == "or" and info.get("tools") and not info.get("image_out")):
                 ctx = mcp.open_run(sink)
             system = system_prompt(info["name"], web, provider, ctx.names() if ctx else None, rules.of_turn(cfg))
             async with asyncio.timeout(config.RUN_TIMEOUT):
@@ -476,6 +476,8 @@ async def run_response(resp_id: str) -> None:
                 elif provider == "codex":
                     await backends.run_codex(model_id, resp["effort"], system, parts, web, sink, run_id=resp_id,
                                              vision=info.get("vision", True), mcp=ctx)
+                elif provider == "codebuddy":
+                    await backends.run_codebuddy(model_id, resp["effort"], system, parts, web, sink, mcp=ctx)
                 elif provider == "or":
                     or_web = web and bool(db.get_setting("or_web", False))
                     await backends.run_openrouter(model_id, resp["effort"], system, parts, or_web, sink, info, mcp=ctx)
@@ -756,6 +758,8 @@ async def _title(conv_id: str) -> None:
         prov, _, mid = tm.partition(":")
         if prov == "claude" and mid:
             title = await backends.quick_claude(prompt, mid)
+        elif prov == "codebuddy" and mid:
+            title = await backends.quick_codebuddy(prompt, mid)
         elif prov == "or" and mid:
             title = await backends.quick_openrouter(prompt, mid)
         else:

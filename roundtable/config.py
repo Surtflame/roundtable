@@ -93,12 +93,13 @@ OIDC_ISSUER = _get("ROUNDTABLE_OIDC_ISSUER", "https://accounts.google.com").rstr
 SESSION_DAYS = _int("ROUNDTABLE_SESSION_DAYS", 30, 1, 365)
 PASSWORD_MIN_LEN = 12
 
-# ---------- 命令行工具（Claude Code / Codex） ----------
+# ---------- 命令行工具（Claude Code / Codex / CodeBuddy） ----------
 
 HOME = str(Path.home())
 CODEX_HOME = _get("CODEX_HOME") or f"{HOME}/.codex"
 _SEARCH_PATH = os.pathsep.join([
     f"{HOME}/.local/bin", f"{CODEX_HOME}/packages/standalone/current/bin", f"{HOME}/.npm-global/bin",
+    f"{HOME}/.codebuddy/bin",
     "/usr/local/bin", "/opt/homebrew/bin", os.environ.get("PATH", ""), "/usr/bin", "/bin"])
 
 
@@ -117,6 +118,9 @@ def _find(env: str, name: str) -> str:
 
 CLAUDE_BIN = _find("ROUNDTABLE_CLAUDE_BIN", "claude")
 CODEX_BIN = _find("ROUNDTABLE_CODEX_BIN", "codex")
+CODEBUDDY_BIN = _find("ROUNDTABLE_CODEBUDDY_BIN", "codebuddy")
+# CodeBuddy 抓网页：默认只走它的远程接口。on = 远程接口抓不到时，允许它从这台机器直接去抓（能碰到内网，见 docs/security.md）
+CODEBUDDY_LOCAL_FETCH = _get("ROUNDTABLE_CODEBUDDY_LOCAL_FETCH", "off").lower() in ("1", "on", "true", "yes")
 CODEX_SANDBOX = _get("ROUNDTABLE_CODEX_SANDBOX", "auto").lower()    # auto | bwrap | off
 if CODEX_SANDBOX not in ("auto", "bwrap", "off"):
     raise ConfigError(f"ROUNDTABLE_CODEX_SANDBOX 只能是 auto / bwrap / off，现在是 {CODEX_SANDBOX!r}")
@@ -125,7 +129,7 @@ CODEX_USER_CONFIG = _get("ROUNDTABLE_CODEX_USER_CONFIG", "off").lower() in ("1",
 # 子进程默认只拿到 HOME / PATH / LANG 和代理设置。要额外传的环境变量在这里点名（例如 ANTHROPIC_API_KEY）。
 CLI_PASS_ENV = [n.strip() for n in _get("ROUNDTABLE_CLI_PASS_ENV").split(",") if n.strip()]
 _PROXY_ENV = ["HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "NO_PROXY", "https_proxy", "http_proxy", "all_proxy",
-              "no_proxy", "CLAUDE_CONFIG_DIR", "CODEX_HOME"]
+              "no_proxy", "CLAUDE_CONFIG_DIR", "CODEX_HOME", "CODEBUDDY_CONFIG_DIR", "CODEBUDDY_INTERNET_ENVIRONMENT"]
 
 
 def cli_env() -> dict:
@@ -151,12 +155,13 @@ MAX_MODELS_PER_TURN = _int("ROUNDTABLE_MAX_MODELS", 6, 1, 12)
 RUN_TIMEOUT = _int("ROUNDTABLE_RUN_TIMEOUT_MIN", 45, 1, 600) * 60      # 单个回答最长时间（秒）
 CONCURRENCY = {"claude": _int("ROUNDTABLE_CONCURRENCY_CLAUDE", 4, 1, 32),
                "codex": _int("ROUNDTABLE_CONCURRENCY_CODEX", 4, 1, 32),
+               "codebuddy": _int("ROUNDTABLE_CONCURRENCY_CODEBUDDY", 4, 1, 32),
                "or": _int("ROUNDTABLE_CONCURRENCY_OPENROUTER", 8, 1, 64)}
 
 
 # ---------- MCP（在网页的设置里接；默认一个都没有） ----------
 
-# 本机网关的端口：只听 127.0.0.1，给 claude / codex 子进程用，不要让反向代理转发它。0 = 让系统挑一个空闲的。
+# 本机网关的端口：只听 127.0.0.1，给 claude / codex / codebuddy 子进程用，不要让反向代理转发它。0 = 让系统挑一个空闲的。
 MCP_GATEWAY_PORT = _int("ROUNDTABLE_MCP_PORT", 0, 0, 65535)
 MCP_CONNECT_TIMEOUT = 20          # 连接、握手、取工具表（秒）
 MCP_CALL_TIMEOUT = _int("ROUNDTABLE_MCP_CALL_TIMEOUT", 180, 5, 1800)    # 单次工具调用（秒）

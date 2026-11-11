@@ -870,7 +870,7 @@ class RunCtx:
     # --- 给 claude / codex：连本机网关 ---
 
     def gateway_error(self) -> str | None:
-        return None if GW["port"] else "MCP 网关没起来（" + (GW["error"] or "原因不明") + "），Claude 和 ChatGPT 这次用不了 MCP。可以先在设置里把 MCP 关掉。"
+        return None if GW["port"] else "MCP 网关没起来（" + (GW["error"] or "原因不明") + "），走命令行的模型（Claude、ChatGPT、CodeBuddy）这次用不了 MCP。可以先在设置里把 MCP 关掉。"
 
     def _url(self, slug: str) -> str:
         return f"http://127.0.0.1:{GW['port']}/mcp/{slug}"
