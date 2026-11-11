@@ -23,7 +23,8 @@ def _claude_models() -> list[dict]:
         mid, _, name = item.strip().partition("=")
         mid = mid.strip()
         if mid and all(ch.isalnum() or ch in "-._[]" for ch in mid):
-            out.append({"id": mid, "name": name.strip() or f"Claude {mid}", "desc": ""})
+            desc = next((m["desc"] for m in _CLAUDE_DEFAULT if m["id"] == mid), "")
+            out.append({"id": mid, "name": name.strip() or f"Claude {mid}", "desc": desc})
     return out or _CLAUDE_DEFAULT
 
 
@@ -43,24 +44,34 @@ def claude_catalog() -> list[dict]:
              "image_out": False, "web": True} for m in CLAUDE_MODELS]
 
 
+def _codex_entries(models) -> list[dict]:
+    out = []
+    for m in models if isinstance(models, list) else []:
+        if not isinstance(m, dict) or not m.get("slug") or m.get("visibility") != "list":
+            continue
+        efforts = [e.get("effort") for e in m.get("supported_reasoning_levels") or [] if e.get("effort")]
+        out.append({"key": f"codex:{m['slug']}", "provider": "codex", "id": m["slug"],
+                    "name": m.get("display_name") or m["slug"], "desc": m.get("description", ""),
+                    "efforts": efforts, "default_effort": m.get("default_reasoning_level") or "",
+                    "vision": "image" in (m.get("input_modalities") or []), "image_out": True, "web": True,
+                    "ctx": m.get("context_window")})
+    return out
+
+
 def codex_catalog() -> list[dict]:
     if not backends.CAPS["codex"]["ok"]:
         return []
     out = []
     try:
-        d = json.loads(Path(config.CODEX_HOME, "models_cache.json").read_text())
-        for m in d.get("models", []):
-            if m.get("visibility") != "list":
-                continue
-            efforts = [e.get("effort") for e in m.get("supported_reasoning_levels", []) if e.get("effort")]
-            out.append({"key": f"codex:{m['slug']}", "provider": "codex", "id": m["slug"],
-                        "name": m.get("display_name") or m["slug"], "desc": m.get("description", ""),
-                        "efforts": efforts, "default_effort": m.get("default_reasoning_level") or "",
-                        "vision": "image" in (m.get("input_modalities") or []), "image_out": True, "web": True,
-                        "ctx": m.get("context_window")})
+        out = _codex_entries(json.loads(Path(config.CODEX_HOME, "models_cache.json").read_text()).get("models"))
     except Exception:
         pass
-    if not out:         # codex 还没拉过模型清单（第一次用之前就是这样）：给一个"用它自己默认模型"的入口
+    if not out:         # codex 还没拉过模型清单（第一次用之前就是这样）：先用这个版本自带的那份
+        try:
+            out = _codex_entries(backends.CAPS["codex"].get("builtin_models"))
+        except Exception:
+            pass
+    if not out:         # 连自带的也拿不到（旧版本）：给一个"用它自己默认模型"的入口
         out = [{"key": "codex:default", "provider": "codex", "id": "default", "name": "Codex（默认模型）",
                 "desc": "用 codex 自己配置的模型", "efforts": [], "default_effort": "",
                 "vision": True, "image_out": True, "web": True}]

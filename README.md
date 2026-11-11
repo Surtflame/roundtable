@@ -80,7 +80,7 @@ systemd、HTTPS、反向代理、备份、升级：[docs/deploy.md](docs/deploy.
 ## 已知的限制
 
 - 只在 **Linux** 上测试过：Ubuntu 24.04 + Python 3.12，配的是 Claude Code 2.1 和 Codex CLI 0.163；另在全新的 Ubuntu 26.10 + Python 3.14 上从头部署过一遍（Codex CLI 0.167；只验证到能启动、检测通过，没有在上面跑真实回答）。macOS 没有测过（没有 bubblewrap 沙箱）；Windows 没有测过。
-- Google 登录的流程用模拟的身份提供方完整测过，写这份文档时还没有拿真实的 Google 账号走过一遍。遇到问题请提 issue。
+- Google 登录的流程用模拟的身份提供方完整测过，真实的 Google 账号只在一次部署上走通过（公网 IP + sslip.io 域名）。遇到问题请提 issue。
 - MCP 功能是用模拟的 MCP 服务器和模拟的 OAuth 授权服务器测的，没有对着各家真实的 MCP 服务逐一验证过。
 - 界面只有中文，给模型的系统提示词也是中文写的（模型会按你提问的语言回答）。
 - 单用户。没有账号体系、没有分享链接、没有多人协作。

@@ -94,6 +94,8 @@ ROUNDTABLE_CLAUDE_MODELS=opus=Claude Opus,sonnet=Claude Sonnet,haiku=Claude Haik
 
 等号左边是别名或完整的模型 id，右边是显示名。
 
+默认的显示名不带版本号（“Claude Opus”），因为圆桌不知道别名在你这台机器上指向哪一版。想看到版本号，就在显示名里自己写上，比如 `opus=Claude Opus 4.5`；想知道别名现在指向谁，跑一次 `claude -p hi --model opus --output-format json`，看输出里的 `modelUsage`。注意 Claude Code 升级后别名可能指向更新的版本，这时你写的显示名不会跟着变；要名实永远一致，等号左边就写完整的模型 id。
+
 ### 圆桌具体是怎么调用的
 
 每个回答启动一个 `claude -p` 进程，用完就退出。参数的要点（完整的在 `roundtable/backends.py`）：
@@ -172,7 +174,7 @@ OpenAI 的文档明确把 API 密钥作为“程序化 / 自动化使用 Codex C
 
 ### 模型清单
 
-读的是 Codex 自己缓存的模型清单（`~/.codex/models_cache.json`），你的账号能用哪些就列哪些。刚装好、还没运行过时只有一个“Codex（默认模型）”的入口，用过一次之后清单就出来了。
+读的是 Codex 自己缓存的模型清单（`~/.codex/models_cache.json`），你的账号能用哪些就列哪些。刚装好、还没运行过时这份缓存还不存在，圆桌先用 `codex debug models` 给出的、这个版本 CLI 自带的清单顶上（不看账号，里面可能有你的账号用不了的模型）；用过一次之后就换成缓存里的那份。很旧的 Codex 没有这个命令，这时只有一个“Codex（默认模型）”的入口。
 
 ### 圆桌具体是怎么调用的
 

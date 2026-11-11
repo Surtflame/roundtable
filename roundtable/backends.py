@@ -51,7 +51,7 @@ STATE: dict = {"claude_rate_limit": None}
 CAPS: dict = {
     "claude": {"ok": False, "why": "还没检测", "version": "", "flags": set(), "isolate": []},
     "codex": {"ok": False, "why": "还没检测", "version": "", "disable": [], "flags": [], "sandbox": "off", "note": "",
-              "wrap": [], "exe": []},
+              "wrap": [], "exe": [], "builtin_models": []},
 }
 
 
@@ -524,7 +524,8 @@ def _codex_cmd(rundir: Path) -> list[str]:
 
 async def probe_codex() -> None:
     cap = CAPS["codex"]
-    cap.update(ok=False, version="", disable=[], flags=[], sandbox="off", note="", wrap=[], exe=[])
+    cap.update(ok=False, version="", disable=[], flags=[], sandbox="off", note="", wrap=[], exe=[],
+               builtin_models=[])
     if not config.CODEX_BIN:
         cap["why"] = "没有找到 codex 命令（没装 Codex CLI，或者 ROUNDTABLE_CODEX_BIN=off）"
         return
@@ -564,7 +565,21 @@ async def probe_codex() -> None:
             print("codex:", cap["note"], flush=True)
     else:
         cap["note"] = "外层沙箱被关掉了（ROUNDTABLE_CODEX_SANDBOX=off），只靠 Codex 自己的只读模式和关掉命令行工具。"
+    cap["builtin_models"] = await _codex_builtin_models()
     cap.update(ok=True, why="")
+
+
+async def _codex_builtin_models() -> list[dict]:
+    """codex 自带的模型清单（不用登录、不发请求）。models_cache.json 还没有的时候拿它顶上；旧版本没有这个命令就是空的。"""
+    code, out = await _run_quick([config.CODEX_BIN, "debug", "models"])
+    start = out.find("{")                       # 前面可能有几行警告
+    if code != 0 or start < 0:
+        return []
+    try:
+        models = json.loads(out[start:]).get("models")
+    except Exception:
+        return []
+    return [m for m in models if isinstance(m, dict) and m.get("slug")] if isinstance(models, list) else []
 
 
 async def probe() -> None:
