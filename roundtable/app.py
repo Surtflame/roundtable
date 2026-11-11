@@ -116,6 +116,7 @@ async def lifespan(_app):
         print(f"  {name}: " + ("可用 " + st[name].get("version", "") if st[name]["ok"] else "未启用 —— " + st[name]["why"]),
               flush=True)
     asyncio.create_task(models.openrouter_catalog())
+    asyncio.create_task(backends.codebuddy_refresh(force=True))
     yield
     for t in list(engine.RESP_TASKS.values()):
         t.cancel()

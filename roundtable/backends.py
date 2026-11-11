@@ -764,8 +764,7 @@ async def probe_codebuddy() -> None:
     if need - flags:
         cap["why"] = "CodeBuddy Code 版本太旧，缺少参数 " + " ".join(sorted(need - flags)) + "，请升级"
         return
-    cap.update(ok=True, why="")
-    await codebuddy_refresh(force=True)
+    cap.update(ok=True, why="")      # 模型清单另外问（codebuddy_refresh），要好几秒，不让启动等它
 
 
 # ---------- Codex ----------
