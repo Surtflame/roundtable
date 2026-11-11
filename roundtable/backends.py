@@ -59,7 +59,7 @@ CAPS: dict = {
     "codex": {"ok": False, "why": "还没检测", "version": "", "disable": [], "flags": [], "sandbox": "off", "note": "",
               "wrap": [], "exe": [], "builtin_models": []},
     # models / account 是问 CLI 问来的（见 codebuddy_refresh）
-    "codebuddy": {"ok": False, "why": "还没检测", "version": "", "flags": set(), "models": [], "account": None,
+    "codebuddy": {"ok": False, "why": "还没检测", "version": "", "flags": set(), "models": [], "account": False,
                   "asked": False, "at": 0.0},
 }
 
@@ -672,7 +672,7 @@ async def quick_codebuddy(prompt: str, model: str, timeout: float = 60) -> str:
 
 async def _codebuddy_ask() -> dict | None:
     """用 SDK 的控制请求问 CLI 两件事：登录的是谁（initialize）、现在能选哪些模型（get_available_models）。
-    只是问它自己，不发模型请求、不花额度。→ {"account": …, "models": [CLI 给的原始模型说明]}，问不出来是 None。"""
+    只是问它自己，不发模型请求、不花额度。→ {"account": 登录了没有, "models": [CLI 给的原始模型说明]}，问不出来是 None。"""
     args = [config.CODEBUDDY_BIN, "-p", "--input-format", "stream-json", "--output-format", "stream-json",
             "--tools", ""] + _codebuddy_common()
     try:
@@ -709,7 +709,8 @@ async def _codebuddy_ask() -> dict | None:
     # rawModels 带着完整说明（能不能看图、思考强度有哪几档、额度倍率）；旧版本没有这个请求，就只有名字
     models = lst.get("rawModels") or [{"id": m.get("modelId"), "name": m.get("name")} for m in lst.get("availableModels") or []
                                       if isinstance(m, dict)] or init.get("models") or []
-    return {"account": init.get("account") or None, "models": models}
+    # account 里带着登录令牌：只记“有没有”，别的不留
+    return {"account": bool(init.get("account")), "models": models}
 
 
 async def codebuddy_refresh(force: bool = False) -> None:
@@ -749,7 +750,7 @@ def codebuddy_login_file() -> bool:
 
 async def probe_codebuddy() -> None:
     cap = CAPS["codebuddy"]
-    cap.update(ok=False, version="", flags=set(), models=[], account=None, asked=False, at=0.0)
+    cap.update(ok=False, version="", flags=set(), models=[], account=False, asked=False, at=0.0)
     if not config.CODEBUDDY_BIN:
         cap["why"] = "没有找到 codebuddy 命令（没装 CodeBuddy Code，或者 ROUNDTABLE_CODEBUDDY_BIN=off）"
         return
