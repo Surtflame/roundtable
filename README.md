@@ -84,7 +84,7 @@ systemd、HTTPS、反向代理、备份、升级：[docs/deploy.md](docs/deploy.
 - 只在 **Linux** 上测试过：Ubuntu 24.04 + Python 3.12，配的是 Claude Code 2.1 和 Codex CLI 0.163；另在全新的 Ubuntu 26.10 + Python 3.14 上从头部署过一遍（Codex CLI 0.167；只验证到能启动、检测通过，没有在上面跑真实回答）。macOS 没有测过（没有 bubblewrap 沙箱）；Windows 没有测过。
 - Google 登录的流程用模拟的身份提供方完整测过，真实的 Google 账号只在一次部署上走通过（公网 IP + sslip.io 域名）。遇到问题请提 issue。
 - MCP 功能是用模拟的 MCP 服务器和模拟的 OAuth 授权服务器测的，没有对着各家真实的 MCP 服务逐一验证过。
-- CodeBuddy 后端是让 `codebuddy`（2.183.0）把请求发到一个模拟的模型接口上测的，作者没有在真实的 CodeBuddy 账号下跑过，见 [docs/backends.md](docs/backends.md) 里的“测试范围”。
+- CodeBuddy 后端在一个真实的国内版账号下跑过普通问答、联网、看图；MCP 和隔离是对着模拟的模型接口测的；国际版和 API 密钥登录没测过。见 [docs/backends.md](docs/backends.md) 里的“测试范围”。
 - 界面只有中文，给模型的系统提示词也是中文写的（模型会按你提问的语言回答）。
 - 单用户。没有账号体系、没有分享链接、没有多人协作。
 - Claude Code、Codex、CodeBuddy 的命令行参数会随版本变化；圆桌启动时会检测，但新版本可能需要这边跟着改。
