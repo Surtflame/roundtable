@@ -1,0 +1,21 @@
+# 网页终端的网页服务（可选，见 docs/terminal.md）。先装 roundtable-tmux.service。
+# User 和 roundtable.service 用同一个：终端里的 shell 就是以这个用户的身份跑的。
+
+[Unit]
+Description=Roundtable terminal (web)
+After=network-online.target roundtable-tmux.service
+Wants=network-online.target roundtable-tmux.service
+
+[Service]
+User=you
+Group=you
+WorkingDirectory=/home/you/roundtable
+ExecStart=/home/you/roundtable/.venv/bin/python -m roundtable term
+Restart=always
+RestartSec=3
+# 这里不设 UMask=0077：在文件管理里新建、上传的文件用系统默认的权限，和你在 SSH 里建的一样。
+# 验证器密钥、数据库这些敏感文件程序自己会设成只有自己能读。
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target

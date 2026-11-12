@@ -72,6 +72,22 @@ def is_loopback_host(host: str) -> bool:
         return False
 
 
+# ---------- 网页终端（可选，另一个进程，详见 docs/terminal.md） ----------
+
+# 终端在浏览器里的地址。设了它才启用终端；必须和 ROUNDTABLE_PUBLIC_URL 不是同一个来源（另一个子域名，或者另一个端口）。
+TERM_URL = _get("ROUNDTABLE_TERM_URL").rstrip("/")
+TERM_ORIGIN = ""
+if TERM_URL:
+    _tu = urllib.parse.urlsplit(TERM_URL)
+    if _tu.scheme not in ("http", "https") or not _tu.netloc or _tu.path not in ("", "/") or _tu.query:
+        raise ConfigError(f"ROUNDTABLE_TERM_URL 应该形如 https://term.example.com ，现在是 {TERM_URL!r}")
+    TERM_ORIGIN = f"{_tu.scheme}://{_tu.netloc}"
+    TERM_HOSTNAME = (_tu.hostname or "").lower()
+TERM_HOST = _get("ROUNDTABLE_TERM_HOST", "127.0.0.1")
+TERM_PORT = _int("ROUNDTABLE_TERM_PORT", 8060, 1, 65535)
+# 能进终端的人。留空 = 能登录圆桌的都能进；google 方式下可以只点名其中几个邮箱。
+TERM_USERS = frozenset(e.strip().lower() for e in _get("ROUNDTABLE_TERM_USERS").split(",") if e.strip())
+
 # ---------- 数据目录 ----------
 
 DATA = Path(_get("ROUNDTABLE_DATA_DIR") or ROOT / "data").expanduser().resolve()
@@ -197,4 +213,15 @@ def check() -> list[str]:
     if AUTH_MODE != "none" and len(ALLOWED_EMAILS) > 1:
         warn.append("ROUNDTABLE_ALLOWED_EMAILS 里有多个邮箱：所有人看到的是同一份对话，用的是同一套订阅/密钥。"
                     "订阅账号一般不允许给别人用，见 docs/backends.md。")
+    if TERM_URL:
+        if TERM_ORIGIN == ORIGIN:
+            raise ConfigError("ROUNDTABLE_TERM_URL 不能和 ROUNDTABLE_PUBLIC_URL 是同一个地址：终端要放在另一个来源下"
+                              "（另一个子域名或另一个端口），对话页面万一被注入了脚本才碰不到它。见 docs/terminal.md")
+        if (TERM_ORIGIN.startswith("https://")) != HTTPS:
+            raise ConfigError("ROUNDTABLE_TERM_URL 和 ROUNDTABLE_PUBLIC_URL 要么都是 https，要么都是 http")
+        if AUTH_MODE == "none" and not (is_loopback_host(TERM_HOSTNAME) and is_loopback_host(TERM_HOST)):
+            raise ConfigError("ROUNDTABLE_AUTH=none 的时候终端也只能在本机用：ROUNDTABLE_TERM_URL 要是 http://localhost:端口，"
+                              "ROUNDTABLE_TERM_HOST 要是回环地址")
+        if AUTH_MODE == "google" and TERM_USERS - ALLOWED_EMAILS:
+            warn.append("ROUNDTABLE_TERM_USERS 里有不在 ROUNDTABLE_ALLOWED_EMAILS 里的邮箱，这些人登录不了，也就进不了终端")
     return warn

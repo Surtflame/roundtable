@@ -24,8 +24,14 @@ from starlette.datastructures import Headers, MutableHeaders
 from . import auth, backends, config, db, engine, files, mcp, models, rules
 
 BOOT = db.new_id()
+# 配了网页终端（另一个进程、另一个来源）的话：只许它把本站嵌进 iframe（frame-ancestors），本站也只嵌它（frame-src）——
+# 「对话 | 终端」切换不重新加载靠这个，见 static/peer.js。本机模式下地址栏里可能是 localhost 也可能是 127.0.0.1，就放行回环地址。
+# 没配终端：谁也不许嵌。
+_FRAME = "'none'"
+if config.TERM_URL:
+    _FRAME = config.TERM_ORIGIN if config.AUTH_MODE != "none" else "http://localhost:* http://127.0.0.1:*"
 CSP = ("default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; "
-       "font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; "
+       f"font-src 'self'; connect-src 'self'; frame-ancestors {_FRAME}; frame-src {_FRAME}; base-uri 'none'; form-action 'self'; "
        "object-src 'none'")
 CSRF_HEADER = "roundtable"
 PUBLIC = {"/healthz", "/login", "/favicon.ico", "/static/login.css", "/static/theme.js", "/static/icon.svg",
@@ -85,7 +91,8 @@ class Guard:
                 h = MutableHeaders(scope=msg)
                 h["X-Content-Type-Options"] = "nosniff"
                 h["Referrer-Policy"] = "same-origin"      # no-referrer 会让浏览器把同站表单的 Origin 也写成 null
-                h["X-Frame-Options"] = "DENY"
+                if not config.TERM_URL:                   # 配了终端时由上面 CSP 的 frame-ancestors 管（只许终端那个来源）
+                    h["X-Frame-Options"] = "DENY"
                 h["Cross-Origin-Opener-Policy"] = "same-origin"
                 h["Cross-Origin-Resource-Policy"] = "same-origin"
                 h["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
@@ -93,7 +100,8 @@ class Guard:
                 if config.HTTPS:
                     h["Strict-Transport-Security"] = "max-age=31536000"
                 if "cache-control" not in h:
-                    h["Cache-Control"] = "no-store"
+                    # 静态文件：浏览器可以留着，用之前问一句变没变（没变是一个很小的 304）；别的都不许存
+                    h["Cache-Control"] = "no-cache" if path.startswith("/static/") else "no-store"
             await send(msg)
         await self.app(scope, receive, send2)
 
@@ -357,12 +365,29 @@ def settings_public() -> dict:
             "last_config": db.get_setting("last_config", None)}
 
 
+def _term_ok(user: str) -> bool:
+    return not config.TERM_USERS or config.AUTH_MODE != "google" or user in config.TERM_USERS
+
+
+@api.post("/api/term/ticket")
+async def term_ticket(request: Request):
+    """去终端用的一次性票据。终端是另一个来源，看不到这边的登录 Cookie，所以由这边（已经登录、过了 CSRF 检查）开一张票，
+    浏览器带着它去终端换那边自己的会话。库里只存哈希，60 秒作废，只能用一次。见 term/auth.py。"""
+    user = request.scope["state"]["user"]
+    if not config.TERM_URL or config.AUTH_MODE == "none" or not _term_ok(user):
+        bad("没有启用终端", 404)
+    from .term import auth as term_auth
+    return {"url": f"{config.TERM_URL}/auth/handoff?t={term_auth.handoff_issue(user)}"}
+
+
 @api.get("/api/me")
 async def me(request: Request):
     await ensure_defaults()
     return {"user": request.scope["state"]["user"], "auth_mode": config.AUTH_MODE, "boot": BOOT,
             "settings": settings_public(), "session_days": config.SESSION_DAYS, "mcp": mcp.summary(),
             "rules": rules.list_all(),
+            # 网页终端的地址（没配、或者这个人不许进终端，就是空的，左边栏不出“终端”）
+            "term_url": (config.TERM_URL + "/") if config.TERM_URL and _term_ok(request.scope["state"]["user"]) else "",
             "limits": {"max_models": config.MAX_MODELS_PER_TURN, "max_upload": config.MAX_UPLOAD}}
 
 

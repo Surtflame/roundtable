@@ -15,6 +15,13 @@
 | `katex.min.js`、`katex.min.css` | [KaTeX](https://github.com/KaTeX/KaTeX) | 0.16.47 | MIT |
 | `fonts/KaTeX_*.woff2` | KaTeX 字体 | 0.16.47 | SIL Open Font License 1.1 |
 
+网页终端（可选，`static_term/vendor/xterm/`）用的终端模拟器，同样是官方发布的原样文件，校验和在同目录的 `SHA256SUMS`，许可证全文是同目录的 `LICENSE`：
+
+| 文件 | 项目 | 版本 | 许可 |
+|---|---|---|---|
+| `xterm.js`、`xterm.css` | [xterm.js](https://github.com/xtermjs/xterm.js)（`@xterm/xterm`） | 6.0.0 | MIT |
+| `addon-fit.js`、`addon-unicode11.js`、`addon-web-links.js`、`addon-clipboard.js` | xterm.js 的官方插件（`@xterm/addon-*`，和 6.0 配套发布的版本）。`addon-clipboard.js` 里打包了 [js-base64](https://github.com/dankogai/js-base64) | — | MIT（js-base64 是 BSD-3-Clause） |
+
 ## 安装时从 PyPI 下载的 Python 依赖
 
 不随仓库分发，由 `pip` 安装。许可信息取自各个包自己声明的元数据，以它们的官方说明为准。
@@ -30,6 +37,8 @@
 | openpyxl | 读 Excel | MIT |
 | python-docx | 读 Word | MIT |
 | python-pptx | 读 PowerPoint | MIT |
+| websockets | 网页终端的 WebSocket | BSD-3-Clause |
+| segno | 网页终端绑定验证器时的二维码 | BSD-3-Clause |
 
 它们各自还会带进来一些间接依赖（starlette、pydantic、lxml 等），完整清单见 `requirements.lock`。
 

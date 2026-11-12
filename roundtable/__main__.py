@@ -5,6 +5,7 @@ python -m roundtable set-password   设置/修改登录密码（password 登录�
 python -m roundtable logout-all     让所有已登录的浏览器下线
 python -m roundtable unlock         解除因为输错密码造成的登录锁定
 python -m roundtable check          只检查配置和后端，不启动
+python -m roundtable term           启动网页终端（可选的另一个进程，见 docs/terminal.md；python -m roundtable term help 看它的子命令）
 """
 import asyncio
 import getpass
@@ -21,6 +22,10 @@ def main() -> int:
         print(f"配置有问题：{e}", file=sys.stderr)
         return 2
     cmd = sys.argv[1] if len(sys.argv) > 1 else "serve"
+
+    if cmd == "term":
+        from .term import cli
+        return cli.main(sys.argv[2:])
 
     if cmd == "serve":
         import uvicorn

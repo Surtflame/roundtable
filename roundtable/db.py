@@ -89,6 +89,8 @@ CREATE TABLE IF NOT EXISTS sessions(
   expires_at REAL NOT NULL
 );
 CREATE TABLE IF NOT EXISTS auth_state(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+-- 从对话页面去终端的一次性票据（见 term/auth.py）。同样只存哈希。
+CREATE TABLE IF NOT EXISTS term_tickets(id TEXT PRIMARY KEY, user TEXT NOT NULL, expires_at REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS oidc_pending(
   state TEXT PRIMARY KEY,           -- 同样只存哈希
   nonce TEXT NOT NULL,

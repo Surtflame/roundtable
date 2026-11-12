@@ -1,6 +1,7 @@
 // 左侧栏：新对话、搜索、对话列表。
 import { S, on } from './state.js';
 import { h, icon, api, toast, menu, confirmDialog, promptDialog, debounce } from './util.js';
+import { switchToPeer } from './peer.js';
 
 let listEl, searchEl, hooks = {};
 const whoami = () => S.me.auth_mode === 'google' ? S.me.user : S.me.auth_mode === 'password' ? '已登录' : '本机模式';
@@ -13,6 +14,10 @@ export function initSide(el, opt) {
     h('div', { class: 'side-top' },
       h('a', { class: 'brand', href: '#/', title: '圆桌' }, h('img', { src: '/static/icon.svg', alt: '', width: '22', height: '22' }), h('span', { text: '圆桌' })),
       h('button', { class: 'icon-btn', type: 'button', title: '收起侧栏', 'aria-label': '收起侧栏', onclick: () => hooks.toggleSide() }, icon('sidebar'))),
+    // “对话 | 终端”：终端是另一个进程、另一个来源（见 docs/terminal.md），左边栏做成一样的，点过去像是同一个东西的两页；
+    // 切换不重新加载（peer.js）。没配终端就没有这一排。
+    S.me.term_url ? h('nav', { class: 'app-switch', 'aria-label': '切换' }, h('span', { class: 'on', text: '对话' }),
+      h('a', { href: S.me.term_url, text: '终端', onclick: switchToPeer })) : null,
     h('a', { class: 'new-chat', href: '#/', onclick: () => hooks.closeDrawer() }, icon('plus'), h('span', { class: 'grow', text: '新对话' }), h('kbd', { text: 'Ctrl ⇧ O' })),
     h('div', { class: 'side-search' }, icon('search'), searchEl),
     listEl,

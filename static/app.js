@@ -5,6 +5,7 @@ import { initThread, renderThread, toBottom, stickBottom, applyTurn, applyResp, 
 import { initComposer, renderComposer, setCfg, startEdit, applyPreset, openPicker, focusInput, switchConv, addFiles, refreshSend } from './composer.js';
 import { initSide, renderSide, convMenu, renameConv } from './side.js';
 import { openSettings } from './settings.js';
+import { initPeer, goToPeer, topNavigate } from './peer.js';
 
 const app = document.getElementById('app');
 let topEl, connEl, loadSeq = 0, lastLayout = null;
@@ -19,7 +20,7 @@ function authLost() {
   dialog('登录已过期', h('p', { class: 'dlg-msg', text: '需要重新登录。输入框里没发出去的文字会保留。' }), {
     esc: false, buttons: [{ text: '重新登录', kind: 'primary', fn: () => {
       try { sessionStorage.setItem('back', location.hash); } catch { /* 记不住就回首页 */ }
-      location.href = '/login';
+      topNavigate('/login');
       return false;
     } }],
   });
@@ -242,6 +243,17 @@ async function boot() {
   } catch (e) {
     if (!authShown) app.replaceChildren(h('div', { class: 'boot' }, `载入失败：${e.message}`, h('br'), h('button', { class: 'btn', type: 'button', onclick: () => location.reload() }, '重试')));
     return;
+  }
+  // 本机模式下地址栏里可能是 localhost 也可能是 127.0.0.1：让终端的地址跟着当前用的那个主机名走，两边才对得上
+  if (S.me.term_url && S.me.auth_mode === 'none') { const u = new URL(S.me.term_url); u.hostname = location.hostname; S.me.term_url = u.href; }
+  if (S.me.term_url) {
+    // 切到“终端”不重新加载：见 peer.js。终端是另一个来源，看不到这边的登录，所以第一次过去要带一张一次性票据
+    initPeer(S.me.term_url, { title: '终端 · 圆桌', onShown: () => { try { focusInput(); } catch { /* 还没建好 */ } },
+      firstUrl: S.me.auth_mode === 'none' ? null : async () => (await api('POST', '/api/term/ticket', {})).url });
+    if (new URLSearchParams(location.search).has('term')) {      // 从终端的“要先登录”页面过来的：直接送回去
+      history.replaceState(null, '', location.pathname + location.hash);
+      return goToPeer();
+    }
   }
   S.settings = S.me.settings;
   S.mcp = S.me.mcp || null;

@@ -9,3 +9,8 @@ chat.example.com {
 		flush_interval -1
 	}
 }
+
+# 可选：网页终端（docs/terminal.md）。必须是另一个域名；Caddy 默认就会转发 WebSocket，不用额外配置。
+#term.example.com {
+#	reverse_proxy 127.0.0.1:8060
+#}

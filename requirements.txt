@@ -8,6 +8,9 @@ pillow>=10.3
 openpyxl>=3.1
 python-docx>=1.1
 python-pptx>=1.0
+# 网页终端（可选的另一个进程，docs/terminal.md）用的：WebSocket、验证器的二维码
+websockets>=13
+segno>=1.6
 
 # 可选：读 iPhone 的 HEIC/HEIF 图片。没装的话其它功能不受影响，传 HEIC 时会提示。
 # 注意它的二进制安装包里带了 x265，整体按 GPLv2 发布，所以没有列为默认依赖：

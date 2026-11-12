@@ -1,0 +1,23 @@
+# 网页终端背后的 tmux（可选，见 docs/terminal.md）。把 User 和路径改成你自己的，然后：
+#   sudo cp deploy/roundtable-tmux.service deploy/roundtable-term.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now roundtable-tmux roundtable-term
+#
+# 单独一个服务：终端的窗口和里面的程序都算在它名下，重启 roundtable-term（网页服务）不会带走它们。
+# 重启这个服务、或者重启机器，所有窗口都会没。
+
+[Unit]
+Description=Roundtable terminal: tmux server
+After=network-online.target
+
+[Service]
+Type=forking
+User=you
+Group=you
+WorkingDirectory=/home/you
+ExecStart=/usr/bin/tmux -L roundtable -f /home/you/roundtable/roundtable/term/tmux.conf start-server
+ExecStop=/usr/bin/tmux -L roundtable kill-server
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

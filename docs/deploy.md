@@ -122,6 +122,10 @@ chat.example.com {
 - `ROUNDTABLE_AUTH` 必须是 `password` 或 `google`。**`none` 不能放在反向代理后面**——那等于谁都能进。圆桌在 `none` 方式下看到代理转发的请求头会直接拒绝，但不要依赖这一点。
 - 上传大小：圆桌默认单个文件 50 MB（`ROUNDTABLE_MAX_UPLOAD_MB`），nginx 的 `client_max_body_size` 要不小于它。
 
+### 网页终端（可选）
+
+想在浏览器里用服务器上的终端（Claude Code、Codex），见 [terminal.md](terminal.md)：另一个域名、另一个进程、两个 systemd 服务。默认不开。
+
 ## 7. 数据在哪，怎么备份
 
 全部在数据目录里（默认是项目下的 `data/`，可以用 `ROUNDTABLE_DATA_DIR` 改）：
@@ -131,6 +135,7 @@ chat.example.com {
 | `roundtable.db`（以及 `-wal`、`-shm`） | 对话、设置、登录会话、密码哈希、MCP 服务器的令牌（明文） |
 | `files/` | 你上传的附件、模型画的图 |
 | `runs/`、`empty/` | 运行时的临时目录，不用备份 |
+| `term/` | 开了网页终端才有：验证器密钥（`totp.json`）、远程环境清单、置顶和隐藏的记录、操作记录 |
 
 数据目录的权限会被设成只有运行用户可读（700）。里面的内容**没有加密**，能读这个目录的人就能读你的全部对话。
 
