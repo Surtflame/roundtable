@@ -1,10 +1,12 @@
 """上传文件的保存、图片规范化、文本抽取；模型生成图片的入库。"""
 import base64
+import codecs
 import hashlib
 import io
 import json
 import mimetypes
 import os
+import re
 from pathlib import Path
 
 from . import config, db
@@ -192,15 +194,64 @@ def extract_pptx(path: Path) -> str:
     return "\n".join(out)
 
 
+_DECLARED = re.compile(rb"""(?:charset|encoding)\s*=\s*["']?\s*([A-Za-z0-9_.:\-]{2,40})""", re.I)
+_TEXT_CTRL = bytes(range(32, 256)) + b"\t\n\x0c\r\x1b"       # 这些之外的控制字符，正常的文本里几乎没有
+
+
+def _looks_binary(data: bytes) -> bool:
+    head = data[:65536]
+    if b"\x00" in head:
+        return True
+    return len(head.translate(None, _TEXT_CTRL)) > len(head) * 0.02
+
+
+def _stray_cjk(text: str) -> bool:
+    """把西文的单字节编码（带重音的字母、项目符号）错当成 GBK 解出来的样子：冒出来的汉字一个一个孤零零地夹在英文中间。
+    真正的中文是连着出现的。"""
+    idx = [i for i, ch in enumerate(text[:200_000]) if ch >= "\x80"]
+    if not idx:
+        return False
+    if any("" <= text[i] <= "" for i in idx):     # 解出了没人用的私用区字符
+        return True
+    seen = set(idx)
+    alone = sum(1 for i in idx if i - 1 not in seen and i + 1 not in seen)
+    return alone > len(idx) * 0.6
+
+
 def decode_text(data: bytes) -> str | None:
-    if b"\x00" in data[:8192] and not data.startswith((b"\xff\xfe", b"\xfe\xff")):
-        return None
-    for enc in ("utf-8-sig", "utf-16", "gb18030"):
+    """把上传的文本文件解成字符串；看着不像文本就返回 None。
+    顺序：BOM → UTF-8 → 文件里自己声明的编码（HTML 的 charset、XML 的 encoding）→ GB18030 → Windows-1252。
+    不是 UTF-8 的文件没法百分之百认准，后两步是猜的。"""
+    if data.startswith((b"\xff\xfe", b"\xfe\xff")):
         try:
-            return data.decode(enc)
-        except Exception:
-            continue
-    return None
+            return data.decode("utf-16")
+        except UnicodeDecodeError:
+            return None
+    if _looks_binary(data):
+        return None
+    try:
+        return data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        pass
+    m = _DECLARED.search(data[:4096])
+    if m:
+        try:
+            enc = codecs.lookup(m.group(1).decode("ascii")).name
+            if not enc.startswith(("utf-16", "utf-32", "utf_16", "utf_32")):      # 没有 BOM 又没有 NUL，不可能是这两种
+                return data.decode(enc)
+        except (LookupError, UnicodeDecodeError):
+            pass
+    try:
+        text = data.decode("gb18030")
+        if not _stray_cjk(text):
+            return text
+    except UnicodeDecodeError:
+        pass
+    # 西文的单字节编码。Windows-1252 有五个字节没定义，碰到了就按 Latin-1（每个字节都有对应的字符，不会失败）
+    try:
+        return data.decode("cp1252")
+    except UnicodeDecodeError:
+        return data.decode("latin-1")
 
 
 def ipynb_to_text(raw: str) -> str:
