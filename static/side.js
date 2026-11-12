@@ -4,7 +4,7 @@ import { h, icon, api, toast, menu, confirmDialog, promptDialog, debounce } from
 import { switchToPeer } from './peer.js';
 
 let listEl, searchEl, hooks = {};
-const whoami = () => S.me.auth_mode === 'google' ? S.me.user : S.me.auth_mode === 'password' ? '已登录' : '本机模式';
+const whoami = () => ['google', 'external'].includes(S.me.auth_mode) ? S.me.user : S.me.auth_mode === 'password' ? '已登录' : '本机模式';
 
 export function initSide(el, opt) {
   hooks = opt;

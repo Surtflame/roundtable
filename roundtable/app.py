@@ -70,6 +70,10 @@ class Guard:
             pass
         elif not user and config.AUTH_MODE == "none":
             return await self._deny(send, status, why)          # 不是本机直连：登录页也不给看
+        elif not user and config.AUTH_MODE == "external":
+            # 登录不归这里管：没有登录页。浏览器直接打开页面就送去网关的登录地址（配了的话），别的一律按状态码拒绝
+            go = auth.external_login_url() if method == "GET" and status == 401 and not path.startswith(("/api/", "/static/")) else ""
+            return await self._deny(send, 302 if go else status, why, go)
         elif not user and path not in PUBLIC:
             # 浏览器直接打开页面 → 去登录页；接口和资源 → 401，前端自己处理
             if method == "GET" and not path.startswith(("/api/", "/static/", "/auth/")):
@@ -253,7 +257,7 @@ def _go(url: str, cookies: list[str] = ()) -> RedirectResponse:
 
 @api.get("/login")
 async def login_page(request: Request, e: str = ""):
-    if request.scope["state"].get("user"):
+    if request.scope["state"].get("user") or config.AUTH_MODE == "external":
         return _go("/")
     return _login_page(e if e in LOGIN_MSG else "")
 
@@ -304,6 +308,8 @@ async def auth_google_callback(request: Request, state: str = "", code: str = ""
 
 @api.post("/auth/logout")
 async def auth_logout(request: Request):
+    if config.AUTH_MODE == "external":
+        bad("登录由外部的登录网关负责，退出也在那边", 409)
     auth.destroy_session(auth.cookie_value(request.headers.get("cookie"), auth.COOKIE))
     r = JSONResponse({"ok": True, "next": "/login?e=bye"})
     r.headers.append("Set-Cookie", auth.clear_cookie(auth.COOKIE))
@@ -366,7 +372,7 @@ def settings_public() -> dict:
 
 
 def _term_ok(user: str) -> bool:
-    return not config.TERM_USERS or config.AUTH_MODE != "google" or user in config.TERM_USERS
+    return not config.TERM_USERS or config.AUTH_MODE not in ("google", "external") or user.lower() in config.TERM_USERS
 
 
 @api.post("/api/term/ticket")
@@ -374,7 +380,7 @@ async def term_ticket(request: Request):
     """去终端用的一次性票据。终端是另一个来源，看不到这边的登录 Cookie，所以由这边（已经登录、过了 CSRF 检查）开一张票，
     浏览器带着它去终端换那边自己的会话。库里只存哈希，60 秒作废，只能用一次。见 term/auth.py。"""
     user = request.scope["state"]["user"]
-    if not config.TERM_URL or config.AUTH_MODE == "none" or not _term_ok(user):
+    if not config.TERM_URL or config.AUTH_MODE not in ("password", "google") or not _term_ok(user):
         bad("没有启用终端", 404)
     from .term import auth as term_auth
     return {"url": f"{config.TERM_URL}/auth/handoff?t={term_auth.handoff_issue(user)}"}

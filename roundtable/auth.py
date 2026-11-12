@@ -3,8 +3,10 @@
   none      不登录。只接受本机回环直连（自己电脑上用，或者 SSH 隧道）。
   password  一个密码，没有用户名（这是单人应用）。密码用 `python -m roundtable set-password` 设。
   google    Google 登录（OpenID Connect 授权码流程），只放行 ROUNDTABLE_ALLOWED_EMAILS 里的邮箱。
+  external  登录由部署者已有的登录网关负责；每个请求都去问一个仓库外面的小文件（ROUNDTABLE_AUTH_PLUGIN）“这是谁”。
+            没有登录页面，也不发会话 Cookie。见本文件末尾和 docs/login.md。
 
-后两种登录成功后发一个随机的会话 Cookie，库里只存它的哈希。
+password 和 google 登录成功后发一个随机的会话 Cookie，库里只存它的哈希。
 每个请求（页面、静态文件、接口、事件流）都要过 authenticate()，没有例外路径是靠"猜不到"保护的。
 """
 import asyncio
@@ -132,6 +134,8 @@ def authenticate(headers, client) -> tuple[str | None, int, str]:
     if config.AUTH_MODE == "none":
         why = local_request_problem(headers, client)
         return (None, 403, why) if why else (LOCAL_USER, 200, "")
+    if config.AUTH_MODE == "external":
+        return external_user(headers, client, "chat")
     user = session_user(cookie_value(headers.get("cookie"), COOKIE))
     return (user, 200, "") if user else (None, 401, "未登录或登录已过期")
 
@@ -334,3 +338,73 @@ async def oidc_finish(state: str, cookie_state: str | None, code: str) -> str:
         print(f"auth: 不在名单里的邮箱尝试登录：{email}", flush=True)
         raise AuthError("denied")
     return create_session(email)
+
+
+# ---------- 外部登录（ROUNDTABLE_AUTH=external） ----------
+#
+# 给已经有一套登录网关的部署用：前面的反向代理（Caddy 的 forward_auth、nginx 的 auth_request、oauth2-proxy、Authelia……）
+# 已经把没登录的请求挡在外面了。但应用不应该因此就什么都不查——有人绕过代理直接连到应用的端口、或者网关那边
+# 配错了放了不该放的人，应用得自己拦得住。怎么核对因网关而异（查它的会话库、验它签的令牌、认一个只有代理知道的密钥），
+# 所以做成一个小文件，由部署者自己写，放在仓库外面：
+#
+#   def authenticate(request) -> str | None
+#       request = {"site": "chat" 或 "term", "headers": {小写的请求头: 值}, "cookies": {名字: 值}, "client": 对端地址}
+#       返回用户标识（一般是邮箱）= 放行；返回 None = 没登录（401）；抛 PermissionError("原因") = 登录了但不许进（403）。
+#       抛别的异常 = 当作登录服务出了问题（503），不放行。
+#   LOGIN_URL = "https://…"          可选。没登录的人直接打开页面时把他送去哪（一般到不了这一步：代理先拦了）
+#
+# 每个请求都会调一次（事件流、终端的长连接是每 30 秒一次），所以它要快，别在里面发网络请求。
+# 设了 ROUNDTABLE_ALLOWED_EMAILS / ROUNDTABLE_TERM_USERS 的话，它返回的用户还得在名单里。
+
+_plugin = None
+
+
+def plugin():
+    global _plugin
+    if _plugin is None:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("roundtable_auth_plugin", config.AUTH_PLUGIN)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        if not callable(getattr(mod, "authenticate", None)):
+            raise RuntimeError(f"{config.AUTH_PLUGIN} 里没有 authenticate(request) 函数")
+        _plugin = mod
+    return _plugin
+
+
+def _cookies(raw: str | None) -> dict:
+    if not raw:
+        return {}
+    try:
+        c = SimpleCookie()
+        c.load(raw)
+        return {k: v.value for k, v in c.items()}
+    except Exception:  # noqa: BLE001
+        return {m.group(1): m.group(2) for m in re.finditer(r"(?:^|;\s*)([\w.-]+)=([^;]*)", raw)}
+
+
+def external_user(headers, client, site: str) -> tuple[str | None, int, str]:
+    """问外部登录的那个文件。site：chat（对话）或 term（终端）。任何意外都不放行。"""
+    try:
+        hd = {k.lower(): v for k, v in dict(headers).items()}
+        user = plugin().authenticate({"site": site, "headers": hd, "cookies": _cookies(hd.get("cookie")),
+                                      "client": str(client[0]) if client else ""})
+    except PermissionError as e:
+        return None, 403, str(e) or "无权访问"
+    except Exception as e:  # noqa: BLE001
+        print(f"auth: 外部登录出错（不放行）：{type(e).__name__}: {e}", flush=True)
+        return None, 503, "登录服务暂时不可用"
+    if not user or not isinstance(user, str):
+        return None, 401, "未登录或登录已过期"
+    user = user.strip()[:200]
+    if config.ALLOWED_EMAILS and user.lower() not in config.ALLOWED_EMAILS:
+        return None, 403, "这个账号不在允许名单里"
+    return user, 200, ""
+
+
+def external_login_url() -> str:
+    try:
+        u = getattr(plugin(), "LOGIN_URL", "")
+        return u if isinstance(u, str) and u.startswith(("https://", "http://")) else ""
+    except Exception:  # noqa: BLE001
+        return ""

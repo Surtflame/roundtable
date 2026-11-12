@@ -19,7 +19,7 @@ function authLost() {
     h('button', { class: 'btn primary', type: 'button', text: '重新登录', onclick: () => { leaving = true; topNavigate((S.me?.chat_url || '/') + '?term=1'); } }))));
 }
 
-const whoami = () => (S.me.auth_mode === 'google' ? S.me.email : S.me.auth_mode === 'password' ? '已登录' : '本机模式');
+const whoami = () => (['google', 'external'].includes(S.me.auth_mode) ? S.me.email : S.me.auth_mode === 'password' ? '已登录' : '本机模式');
 
 // 退出终端这边的登录（对话那边不受影响）。终端里的程序照常跑
 async function logout() {
@@ -62,7 +62,7 @@ function build() {
     { text: '字号小一点', fn: () => setFontSize(-1) },
     '-',
     S.me.totp ? { text: '现在就锁上', icon: 'lock', fn: lockNow } : null,
-    S.me.auth_mode !== 'none' ? { text: '退出终端的登录', icon: 'x', fn: logout } : null,
+    ['password', 'google'].includes(S.me.auth_mode) ? { text: '退出终端的登录', icon: 'x', fn: logout } : null,
     { label: whoami() },
   ].filter(Boolean), { align: 'right' }) }, icon('more'));
   const newBtn = h('button', { class: 'new-chat', type: 'button', onclick: () => newMenu(newBtn) }, icon('plus'), h('span', { class: 'grow', text: '新窗口' }), icon('down'));

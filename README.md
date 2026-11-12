@@ -60,13 +60,14 @@ cp .env.example .env
 
 ## 放到服务器上
 
-三种登录方式（`.env` 里的 `ROUNDTABLE_AUTH`）：
+登录方式（`.env` 里的 `ROUNDTABLE_AUTH`）：
 
 | 方式 | 适合 | 说明 |
 |---|---|---|
 | `none`（默认） | 只在本机用，或者通过 SSH 隧道用 | 不登录，但只允许监听 `127.0.0.1`；配成别的地址会拒绝启动 |
 | `google` | 放在公网上，**推荐** | 用 Google 账号登录，只放行你列出的邮箱。配置教程约 10 分钟 |
 | `password` | 不想用 Google | 一个长密码。有防暴力破解的锁定，没有二次验证 |
+| `external` | 已经有自己的登录网关（单点登录） | 圆桌不做登录页，每个请求去问一个你写的小文件“这是谁”。见 [docs/login.md](docs/login.md) |
 
 教程和“密码登录到底安不安全”的说明：[docs/login.md](docs/login.md)。  
 systemd、HTTPS、反向代理、备份、升级：[docs/deploy.md](docs/deploy.md)。

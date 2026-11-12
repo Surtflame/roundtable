@@ -249,7 +249,7 @@ async function boot() {
   if (S.me.term_url) {
     // 切到“终端”不重新加载：见 peer.js。终端是另一个来源，看不到这边的登录，所以第一次过去要带一张一次性票据
     initPeer(S.me.term_url, { title: '终端 · 圆桌', onShown: () => { try { focusInput(); } catch { /* 还没建好 */ } },
-      firstUrl: S.me.auth_mode === 'none' ? null : async () => (await api('POST', '/api/term/ticket', {})).url });
+      firstUrl: !['password', 'google'].includes(S.me.auth_mode) ? null : async () => (await api('POST', '/api/term/ticket', {})).url });
     if (new URLSearchParams(location.search).has('term')) {      // 从终端的“要先登录”页面过来的：直接送回去
       history.replaceState(null, '', location.pathname + location.hash);
       return goToPeer();

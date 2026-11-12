@@ -90,7 +90,7 @@ class Guard:
             return await self.app(scope, receive, send)
         headers = Headers(scope=scope)
         cookies = _cookies(headers)
-        sid = cookies.get(auth.SESSION_COOKIE)
+        sid = auth.credential(headers, scope.get("client"), cookies)
         if scope["type"] == "websocket":
             # 握手没过就在 accept 之前关掉，浏览器那边看到的是 403
             user, _, _ = auth.identify(headers, scope.get("client"), sid)
@@ -161,7 +161,8 @@ async def lifespan(_app):
     except tmuxctl.TmuxError as e:
         up = False
         print("提醒：", e, flush=True)
-    who = "不用登录，只接受本机访问" if rt.AUTH_MODE == "none" else f"用圆桌的登录（{rt.AUTH_MODE}）"
+    who = ("不用登录，只接受本机访问" if rt.AUTH_MODE == "none" else "登录归外部的登录网关" if rt.AUTH_MODE == "external"
+           else f"用圆桌的登录（{rt.AUTH_MODE}）")
     print(f"圆桌的终端：{config.ORIGIN}（监听 {config.HOST}:{config.PORT}，tmux -L {config.TMUX_SOCKET}"
           f"{'' if up else '，还没起来'}；{who}；动态验证码{'开着' if config.TOTP else '没开'}）", flush=True)
     yield
@@ -223,7 +224,7 @@ async def handoff(request: Request, t: str = ""):
     """对话页面带着一次性票据把浏览器送到这里：票据对就种下终端自己的会话 Cookie，然后去首页。
     票据不对（过期、用过了）也去首页——那里会显示“要先登录”。"""
     r = RedirectResponse("/", status_code=303, headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
-    if rt.AUTH_MODE != "none":
+    if rt.AUTH_MODE in ("password", "google"):
         token = auth.handoff_redeem(t)
         if token:
             r.headers.append("Set-Cookie", auth.session_cookie(token))
@@ -237,6 +238,8 @@ async def logout(request: Request):
     s = st(request)
     if s["unlock"]:
         await ptyws.close_all(s["unlock"]["hash"])
+    if rt.AUTH_MODE not in ("password", "google"):
+        bad("这种登录方式下终端没有自己的登录可退", 409)
     auth.unlock_drop(s.get("unlock_token"))
     auth.session_drop(s.get("sid"))
     db.audit("logout", "", s["ip"])

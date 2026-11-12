@@ -6,6 +6,8 @@
   - 浏览器带着票据打开终端的 /auth/handoff；终端核对、作废这张票，给浏览器种一个终端自己的会话 Cookie
   - 之后每个请求都用这个 Cookie 回库里查：会话还在不在、这个人现在还许不许登录（名单改了立刻生效）
 ROUNDTABLE_AUTH=none 时没有登录：只接受本机回环直连，规则和对话那边一样。
+ROUNDTABLE_AUTH=external 时不用递票：登录归部署者自己的网关管，这里和对话那边一样，每个请求都去问那个小文件
+（告诉它 site 是 term，它可以对终端用更严的规则）。
 
 第二道：动态验证码，标准 TOTP（RFC 6238，SHA-1、30 秒、6 位），谷歌验证器、1Password 之类都能扫。每个用户各绑各的。
   - 密钥只在服务器的 <数据目录>/term/totp.json 里（600）。第一次由网页绑定；绑定之后网页上不能重绑，
@@ -47,14 +49,27 @@ def allowed(user: str | None) -> bool:
     """这个（已经能登录圆桌的）人许不许进终端。"""
     if not user:
         return False
-    return not rt.TERM_USERS or rt.AUTH_MODE != "google" or user in rt.TERM_USERS
+    return not rt.TERM_USERS or rt.AUTH_MODE not in ("google", "external") or user.lower() in rt.TERM_USERS
 
 
-def identify(headers, client, token: str | None) -> tuple[str | None, int, str]:
-    """→ (user, status, 提示)。user 为 None 就是拒绝。"""
+def credential(headers, client, cookies: dict):
+    """这个请求拿来证明身份的东西，留着给已经连上的终端定期复查用：
+    自己管登录时是会话 Cookie 的值；外部登录时是整套请求头（要原样再问一遍那个小文件）。"""
+    if rt.AUTH_MODE == "external":
+        return {"headers": {k.lower(): v for k, v in dict(headers).items()}, "client": client}
+    return cookies.get(SESSION_COOKIE)
+
+
+def identify(headers, client, token) -> tuple[str | None, int, str]:
+    """→ (user, status, 提示)。user 为 None 就是拒绝。token 是 credential() 给的。"""
     if rt.AUTH_MODE == "none":
         why = rt_auth.local_request_problem(headers, client)
         return (None, 403, why) if why else (rt_auth.LOCAL_USER, 200, "")
+    if rt.AUTH_MODE == "external":
+        user, status, why = rt_auth.external_user(headers, client, "term")
+        if user and not allowed(user):
+            return None, 403, "这个账号不能进终端"
+        return user, status, why
     user = rt_auth.session_user(token)
     if not user:
         return None, 401, "未登录或登录已过期"
@@ -65,7 +80,10 @@ def session_user(token: str | None) -> str | None:
     """已经连上的终端定期复查用：会话还在、人还在名单里。不登录的模式没有会话可查。"""
     if rt.AUTH_MODE == "none":
         return rt_auth.LOCAL_USER
-    user = rt_auth.session_user(token)
+    if rt.AUTH_MODE == "external":
+        user = rt_auth.external_user(token["headers"], token["client"], "term")[0] if isinstance(token, dict) else None
+    else:
+        user = rt_auth.session_user(token)
     return user if allowed(user) else None
 
 
@@ -106,8 +124,9 @@ def session_cookie(token: str, clear: bool = False) -> str:
     return f"{SESSION_COOKIE}={'' if clear else token}; Path=/; Max-Age={age}; HttpOnly; SameSite=Lax{secure}"
 
 
-def session_drop(token: str | None) -> None:
-    rt_auth.destroy_session(token)
+def session_drop(token) -> None:
+    if isinstance(token, str):
+        rt_auth.destroy_session(token)
 
 
 # ---------- 动态验证码 ----------
@@ -249,11 +268,12 @@ def unlock_create(user: str, ip: str, ua: str) -> str:
     return token
 
 
-def unlock_check(token: str | None, user: str, session_token: str | None = None) -> dict | None:
+def unlock_check(token: str | None, user: str, session_token=None) -> dict | None:
     """有效 → {"hash", "expires_in", "idle_left"}；无效（没有、过期、闲置太久、换了账号）→ None。
     没开动态验证码时永远有效，标识跟着登录会话走（这样退出登录时还能把这个人的终端连接断掉）。"""
     if not config.TOTP:
-        return {"hash": OPEN_PREFIX + _h(f"{user}\n{session_token or ''}")[:40], "expires_in": 0, "idle_left": 0}
+        key = session_token["headers"].get("cookie", "") if isinstance(session_token, dict) else (session_token or "")
+        return {"hash": OPEN_PREFIX + _h(f"{user}\n{key}")[:40], "expires_in": 0, "idle_left": 0}
     if not token or len(token) > 200:
         return None
     r = db.q1("SELECT * FROM unlocks WHERE token_hash=?", (_h(token),))

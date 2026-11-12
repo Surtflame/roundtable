@@ -168,6 +168,22 @@ def _origin(url: str) -> tuple:
     return u.scheme, (u.hostname or "").lower(), u.port or (443 if u.scheme == "https" else 80)
 
 
+DENY_MSG = "这个 MCP 服务器在部署者的禁止名单里（ROUNDTABLE_MCP_DENY_*），不能接到聊天模型上，网页上放不开。"
+
+
+def _denied_url(url: str) -> bool:
+    u = urllib.parse.urlsplit(url)
+    low = url.lower()
+    return (u.hostname or "").lower() in config.MCP_DENY_HOSTS or any(part in low for part in config.MCP_DENY_URL_PARTS)
+
+
+def _denied_info(info, tools) -> bool:
+    """握手之后再认一遍：换个域名、换条路径接进来的同一个服务器，看它自报的名字和工具名。"""
+    name = str((info or {}).get("name") or "").strip().lower() if isinstance(info, dict) else ""
+    names = {str(t.get("name") or "").lower() for t in tools or [] if isinstance(t, dict)}
+    return name in config.MCP_DENY_SERVER_NAMES or len(names & config.MCP_DENY_TOOLS) >= 2
+
+
 def check_url(url: str) -> str:
     url = (url or "").strip()
     if not url or len(url) > 2000 or re.search(r"\s", url):
@@ -182,6 +198,8 @@ def check_url(url: str) -> str:
         raise ValueError("地址要以 https:// 开头")
     if u.username or u.password:
         raise ValueError("地址里不要带用户名和密码")
+    if _denied_url(url):
+        raise ValueError(DENY_MSG)
     if u.scheme == "http" and not _loopback(host):
         raise ValueError("只支持 https 地址")
     if _origin(url) == _origin(config.ORIGIN) or (_loopback(host) and port in (config.PORT, GW["port"])):
@@ -716,6 +734,9 @@ async def _load_tools(s: dict) -> dict:
     except McpError as e:
         _set(s["id"], status="error", error=str(e))
         raise ValueError(str(e)) from None
+    if _denied_info(st["info"], tools):
+        await delete_server(s["id"])
+        raise ValueError(DENY_MSG)
     _set(s["id"], info=st["info"], tools=_merge_tools(s["tools"], tools), status="ok", error=None)
     return get(s["id"])
 
@@ -767,6 +788,9 @@ async def add_server(name: str, url: str, token: str = "", header: str = "", cli
     except McpError as e:
         _SESS.pop(s["id"], None)
         raise ValueError(str(e)) from None
+    if _denied_info(st["info"], tools):
+        _SESS.pop(s["id"], None)
+        raise ValueError(DENY_MSG)
     s.update(name=name or _clip(st["info"].get("name") or "", 40).strip() or host, info=st["info"],
              tools=_merge_tools([], tools))
     s["slug"] = _slug(s["name"], url)
@@ -797,6 +821,9 @@ async def refresh_server(sid: str) -> None:
     s = get(sid)
     if not s:
         raise ValueError("没有这个服务器")
+    if _denied_url(s["url"]):
+        await delete_server(sid)
+        raise ValueError(DENY_MSG)
     await _load_tools(s)
 
 
@@ -927,7 +954,8 @@ class RunCtx:
         t0 = time.time()
         try:
             s = get(srv["id"])
-            if not s or not _live(s) or not any(t["name"] == tool["name"] and t.get("enabled") for t in s["tools"]):
+            if (not s or not _live(s) or _denied_url(s["url"]) or _denied_info(s["info"], s["tools"])
+                    or not any(t["name"] == tool["name"] and t.get("enabled") for t in s["tools"])):
                 raise McpError("用户刚刚在设置里把这个工具关掉了")
             text, bad = _flatten(await rpc(s, "tools/call", {"name": tool["name"], "arguments": args},
                                            timeout=config.MCP_CALL_TIMEOUT))
@@ -948,7 +976,7 @@ def open_run(sink) -> RunCtx | None:
     """给一次回答准备 MCP。没有可用的工具就返回 None（模型那边完全看不到 MCP）。"""
     srv = {}
     for s in servers():
-        if not _live(s):
+        if not _live(s) or _denied_url(s["url"]) or _denied_info(s["info"], s["tools"]):
             continue
         tools = {t["x"]: t for t in s["tools"] if t.get("enabled") and t.get("x")}
         if tools:

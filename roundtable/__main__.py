@@ -68,6 +68,13 @@ def main() -> int:
         print(f"对外地址 {config.PUBLIC_URL}，监听 {config.HOST}:{config.PORT}，登录方式 {config.AUTH_MODE}，数据目录 {config.DATA}")
         if config.AUTH_MODE == "password" and not auth.has_password():
             print("提醒：还没有设密码。运行 python -m roundtable set-password")
+        if config.AUTH_MODE == "external":
+            try:
+                auth.plugin()
+                print(f"外部登录：{config.AUTH_PLUGIN} 加载正常")
+            except Exception as e:  # noqa: BLE001
+                print(f"外部登录的文件加载失败：{type(e).__name__}: {e}", file=sys.stderr)
+                return 2
         if config.AUTH_MODE == "google":
             print(f"Google 登录回调地址（填到 Google Cloud 控制台里）：{auth.redirect_uri()}")
         for name, title in (("claude", "Claude Code"), ("codex", "Codex"), ("codebuddy", "CodeBuddy"),

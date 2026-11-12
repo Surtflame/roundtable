@@ -42,7 +42,9 @@ REVALIDATE_EVERY = int(os.environ.get("ROUNDTABLE_TERM_TEST_REVALIDATE") or 30) 
 
 # --- tmux ---
 # 用单独的套接字，和这台机器上别的 tmux 完全分开。从 SSH 里也能接进来：tmux -L roundtable attach -t <窗口名>
-TMUX_SOCKET = os.environ.get("ROUNDTABLE_TERM_TEST_SOCKET") or "roundtable"
+TMUX_SOCKET = os.environ.get("ROUNDTABLE_TERM_TEST_SOCKET") or rt._get("ROUNDTABLE_TERM_TMUX_SOCKET", "roundtable")
+if not TMUX_SOCKET.replace("-", "").replace("_", "").isalnum():
+    raise rt.ConfigError("ROUNDTABLE_TERM_TMUX_SOCKET 只能用字母、数字、- 和 _")
 TMUX_CONF = Path(__file__).resolve().parent / "tmux.conf"
 # tmux 服务没起来就自己起一个。用 systemd 的话建议另外装 deploy/roundtable-tmux.service：
 # 那样重启终端的网页服务不会带走窗口（自己起的 tmux 和网页服务在同一个控制组里，会被一起停掉）

@@ -98,9 +98,12 @@ EMPTY_DIR = DATA / "empty"        # claude -p 的工作目录（空）
 
 # ---------- 登录 ----------
 
-AUTH_MODE = _get("ROUNDTABLE_AUTH", "none").lower()       # none | password | google
-if AUTH_MODE not in ("none", "password", "google"):
-    raise ConfigError(f"ROUNDTABLE_AUTH 只能是 none / password / google，现在是 {AUTH_MODE!r}")
+AUTH_MODE = _get("ROUNDTABLE_AUTH", "none").lower()       # none | password | google | external
+if AUTH_MODE not in ("none", "password", "google", "external"):
+    raise ConfigError(f"ROUNDTABLE_AUTH 只能是 none / password / google / external，现在是 {AUTH_MODE!r}")
+# external：登录由你已有的登录网关负责（放在前面的反向代理 + 单点登录），圆桌自己不做登录页面，
+# 而是每个请求都去问一个你写的小文件“这个请求是谁”。见 docs/login.md 的“外部登录”。
+AUTH_PLUGIN = _get("ROUNDTABLE_AUTH_PLUGIN")
 ALLOWED_EMAILS = frozenset(e.strip().lower() for e in _get("ROUNDTABLE_ALLOWED_EMAILS").split(",") if e.strip())
 GOOGLE_CLIENT_ID = _get("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = _get("GOOGLE_CLIENT_SECRET")
@@ -184,6 +187,18 @@ MCP_CALL_TIMEOUT = _int("ROUNDTABLE_MCP_CALL_TIMEOUT", 180, 5, 1800)    # 单次
 MCP_RESULT_CAP = 40_000           # 一次工具结果最多给模型多少字符
 MCP_MAX_CALLS = _int("ROUNDTABLE_MCP_MAX_CALLS", 60, 1, 1000)           # 一个回答里最多调用多少次工具
 MCP_MAX_ROUNDS = 16               # OpenRouter：模型和工具最多来回多少轮
+
+
+def _csv(name: str) -> frozenset:
+    return frozenset(x.strip().lower() for x in _get(name).split(",") if x.strip())
+
+
+# 禁止接入的 MCP 服务器（部署者定的，网页上放不开）。给那些“绝不能交到聊天模型手里”的东西用，比如密码库。
+# 四种认法，对上任何一种就拒绝：主机名；地址里含某段文字；服务器握手时自报的名字；工具名（对上两个及以上才算，防止同名巧合）
+MCP_DENY_HOSTS = _csv("ROUNDTABLE_MCP_DENY_HOSTS")
+MCP_DENY_URL_PARTS = _csv("ROUNDTABLE_MCP_DENY_URL_PARTS")
+MCP_DENY_SERVER_NAMES = _csv("ROUNDTABLE_MCP_DENY_SERVER_NAMES")
+MCP_DENY_TOOLS = _csv("ROUNDTABLE_MCP_DENY_TOOLS")
 MCP_MAX_SERVERS = 20
 
 
@@ -207,10 +222,20 @@ def check() -> list[str]:
         iss = urllib.parse.urlsplit(OIDC_ISSUER)
         if iss.scheme != "https" and not (iss.scheme == "http" and is_loopback_host(iss.hostname or "")):
             raise ConfigError("ROUNDTABLE_OIDC_ISSUER 必须是 https 地址")
+    if AUTH_MODE == "external":
+        if not AUTH_PLUGIN:
+            raise ConfigError("ROUNDTABLE_AUTH=external 需要 ROUNDTABLE_AUTH_PLUGIN（一个 Python 文件的完整路径），见 docs/login.md")
+        p = Path(AUTH_PLUGIN)
+        if not p.is_absolute() or not p.is_file():
+            raise ConfigError(f"ROUNDTABLE_AUTH_PLUGIN={AUTH_PLUGIN} 不是一个存在的文件（要写完整路径）")
+        st = p.stat()
+        # 这个文件里的代码决定谁能进来，而且是以服务的身份运行的：别人能改它，就等于别人能进来
+        if st.st_uid not in (0, os.getuid()) or st.st_mode & 0o022:
+            raise ConfigError(f"{AUTH_PLUGIN} 的主人必须是运行服务的用户或 root，而且不能让同组或其他人可写（chmod go-w）")
     if AUTH_MODE != "none" and not HTTPS and not is_loopback_host(PUBLIC_HOST):
         warn.append(f"ROUNDTABLE_PUBLIC_URL={PUBLIC_URL} 不是 https：密码和登录 Cookie 会在网络上明文传输。"
                     "只在可信的内网/VPN 里这样用，放到公网请先配 HTTPS。")
-    if AUTH_MODE != "none" and len(ALLOWED_EMAILS) > 1:
+    if AUTH_MODE in ("password", "google") and len(ALLOWED_EMAILS) > 1:
         warn.append("ROUNDTABLE_ALLOWED_EMAILS 里有多个邮箱：所有人看到的是同一份对话，用的是同一套订阅/密钥。"
                     "订阅账号一般不允许给别人用，见 docs/backends.md。")
     if TERM_URL:

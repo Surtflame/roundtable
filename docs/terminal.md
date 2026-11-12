@@ -58,10 +58,11 @@ python -m roundtable term     # 终端，http://localhost:8060
 |---|---|---|
 | `ROUNDTABLE_TERM_URL` | 空（不启用） | 终端在浏览器里的地址。必须和 `ROUNDTABLE_PUBLIC_URL` 不同来源 |
 | `ROUNDTABLE_TERM_HOST` / `ROUNDTABLE_TERM_PORT` | `127.0.0.1` / `8060` | 终端的进程监听在哪 |
-| `ROUNDTABLE_TERM_USERS` | 空 | `google` 登录方式下，只让名单里的这几个邮箱进终端。空 = 能登录的都能进 |
+| `ROUNDTABLE_TERM_USERS` | 空 | `google` 和 `external` 登录方式下，只让名单里的这几个用户进终端。空 = 能登录的都能进 |
 | `ROUNDTABLE_TERM_TOTP` | 要登录时 `on`，本机模式 `off` | 动态验证码这一道开不开 |
 | `ROUNDTABLE_TERM_UNLOCK_HOURS` / `ROUNDTABLE_TERM_IDLE_MIN` | `12` / `120` | 输一次验证码最多管多久；多久没操作自动锁上 |
 | `ROUNDTABLE_TERM_CWD` | 家目录 | 新窗口默认开在哪 |
+| `ROUNDTABLE_TERM_TMUX_SOCKET` | `roundtable` | 终端用的 tmux 套接字的名字 |
 | `ROUNDTABLE_TERM_PROTECT` | 空 | 逗号分隔的目录：文件管理里不许改、不许删、不许往里传（终端里照样能动，只是防手滑） |
 | `ROUNDTABLE_TERM_MAX_UPLOAD_MB` | `2048` | 文件管理单个上传的上限 |
 
@@ -73,6 +74,8 @@ python -m roundtable term     # 终端，http://localhost:8060
 
 1. **圆桌的登录**。终端和对话是两个来源，对话那边的登录 Cookie 终端看不到，所以登录是“递票”过来的：已经登录的对话页面向它的后端要一张一次性票据（60 秒作废、只能用一次、库里只存哈希），浏览器带着票据去终端，换成终端自己的会话 Cookie。之后终端的每个请求都回库里查这个会话还在不在、这个人现在还许不许登录。
 2. **动态验证码（TOTP）**。每个用户各自绑定各自的验证器。验证通过后发一个只给终端这个站的 Cookie，默认最长 12 小时、闲置 2 小时失效。连错 5 次锁 5 分钟，同一个验证码不能用第二次。密钥在服务器的 `<数据目录>/term/totp.json`（权限 600）；绑定之后网页上不能重绑，要重置得在服务器上运行 `python -m roundtable term totp-reset`。
+
+用外部登录（`ROUNDTABLE_AUTH=external`，见 [login.md](login.md)）时不用递票：终端和对话一样，每个请求直接去问你那个文件，`site` 是 `term`。
 
 密码登录方式本身没有二次验证，所以用密码登录又开终端的话，这一道动态验证码就是唯一的第二重保护，不建议关。
 

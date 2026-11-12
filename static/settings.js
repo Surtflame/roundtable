@@ -76,6 +76,7 @@ function accountRow() {
   } }, '退出登录');
   if (S.me.auth_mode === 'google') return row(S.me.user, `用 Google 账号登录；谁能进来由服务器上的 ROUNDTABLE_ALLOWED_EMAILS 决定。登录 ${S.me.session_days} 天后要重新登一次。${keep}`, out);
   if (S.me.auth_mode === 'password') return row('密码登录', `改密码：在服务器上运行 python -m roundtable set-password（会让所有浏览器下线）。登录 ${S.me.session_days} 天后要重新登一次。${keep}`, out);
+  if (S.me.auth_mode === 'external') return row(S.me.user, `登录由部署者自己的登录网关负责，退出、换账号也在那边。${keep}`, null);
   return row('本机模式', `没有开登录，只有这台机器自己（或 SSH 隧道）能访问。${keep}`, null);
 }
 
